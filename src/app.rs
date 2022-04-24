@@ -21,7 +21,8 @@ pub struct ResourceRefs {
     pub procelio_logo: Option<egui::TextureHandle>,
     pub discord_logo: Option<egui::TextureHandle>,
     pub twitter_logo: Option<egui::TextureHandle>,
-    pub youtube_logo: Option<egui::TextureHandle>
+    pub youtube_logo: Option<egui::TextureHandle>,
+    pub background: Option<egui::TextureHandle>
 }
 
 impl ResourceRefs {
@@ -31,6 +32,7 @@ impl ResourceRefs {
             discord_logo: None,
             twitter_logo: None,
             youtube_logo: None,
+            background: None,
         }
     }
 
@@ -66,6 +68,12 @@ impl ResourceRefs {
     pub fn get_youtube_logo(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
         self.youtube_logo.get_or_insert_with(|| {
             ui.ctx().load_texture("youtube-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/youtube_logo_small.png")).unwrap())
+        })
+    }
+
+    pub fn get_background(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
+        self.background.get_or_insert_with(|| {
+            ctx.load_texture("background", ResourceRefs::load_image_bytes(include_bytes!("resources/background.png")).unwrap())
         })
     }
 }
@@ -121,52 +129,59 @@ impl epi::App for ProcelioLauncher {
             }
         }
 
+        frame.set_window_size(egui::vec2(960.0, 540.0));
+        let bgtex = self.refs.get_background(ctx);
+        let img = egui::Image::new(bgtex, bgtex.size_vec2());
+        let imgrect = egui::Rect::from_two_pos(egui::pos2(0.0, 0.0), egui::pos2(960.0, 540.0));
+     //   egui::Area::new("img").order(egui::Order::Background).show(ctx, |ui| {
+     //       img.paint_at(ui, imgrect);//, rect)
+     //   });
+
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-              /*   ui.columns(3, |ui| {
-                    ui[0].with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                let tex = self.refs.get_procelio_logo(ui);
+                ui.image(tex, tex.size_vec2());
+                ui.hyperlink_to("Procelio Webpage", "https://www.proceliogame.com");
+            });
+        });
+
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+
+            ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
+                let launch = egui::widgets::Button::new(" LAUNCH ").fill(egui::Color32::from_rgb(255, 117, 0));
+                let mut launch_style = ui.style_mut().clone();
+                launch_style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(48.0));
+                ui.set_style(launch_style);
+                // ui.set_fonts(egui::TextStyle::Name("Launch".into()))
+               
+                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
+                    ui.add_space(1.0);
+                    if ui.add(launch).clicked() {
+                        // TODO
+                    }
+                });
+
+                ui.reset_style();
+                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
+                    let mut settings_style = ui.style_mut().clone();
+                    settings_style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(24.0));
+                    ui.set_style(settings_style);
+                    if ui.button("      SETTINGS      ").clicked() {
+                        // TODO
+                    }
+
+                    ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
                         let twitter = self.refs.get_twitter_logo(ui);
-                        ui.add(egui::widgets::ImageButton::new(twitter, twitter.size_vec2()));
+                        let size = twitter.size_vec2();
+                        let size = egui::vec2(size.x / 1.5, size.y / 1.5);
+                        ui.add(egui::widgets::ImageButton::new(twitter, size));
     
                         let youtube = self.refs.get_youtube_logo(ui);
-                        ui.add(egui::widgets::ImageButton::new(youtube, youtube.size_vec2()));
-                    });
+                        ui.add(egui::widgets::ImageButton::new(youtube, size));
 
-                    let tex = self.refs.get_procelio_logo(&ui[1]);
-                    ui[1].set_width(tex.size_vec2().x);
-                    ui[1].with_layout(egui::Layout::top_down(egui::Align::Center),|ui| {
-                        
-                        ui.image(tex, tex.size_vec2());
-    
-                        ui.hyperlink("https://www.proceliogame.com");
-                    });
-
-                    ui[2].with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                         let discord = self.refs.get_discord_logo(ui);
-                        ui.add(egui::widgets::ImageButton::new(discord, discord.size_vec2()));
+                        ui.add(egui::widgets::ImageButton::new(discord, size));
                     });
-                });*/
-                
-                ui.vertical(|ui| {
-                    let twitter = self.refs.get_twitter_logo(ui);
-                    ui.add(egui::widgets::ImageButton::new(twitter, twitter.size_vec2()));
-
-                    let youtube = self.refs.get_youtube_logo(ui);
-                    ui.add(egui::widgets::ImageButton::new(youtube, youtube.size_vec2()));
-                });
-
-                ui.vertical(|ui| {
-                    let tex = self.refs.get_procelio_logo(ui);
-                    ui.image(tex, tex.size_vec2());
-
-                    ui.hyperlink("https://www.proceliogame.com");
-                });
-               
-                ui.vertical(|ui| {
-                    let discord = self.refs.get_discord_logo(ui);
-                    ui.add(egui::widgets::ImageButton::new(discord, discord.size_vec2()));
-                    let discord = self.refs.get_discord_logo(ui);
-                    ui.add(egui::widgets::ImageButton::new(discord, discord.size_vec2()));
                 });
             });
         });
@@ -196,13 +211,6 @@ impl epi::App for ProcelioLauncher {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
-            ui.hyperlink("https://github.com/emilk/eframe_template");
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/master/",
-                "Source code."
-            ));
             egui::warn_if_debug_build(ui);
         });
 
