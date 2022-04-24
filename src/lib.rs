@@ -3,7 +3,9 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
 mod app;
-pub use app::TemplateApp;
+pub mod json;
+pub mod net;
+pub use app::ProcelioLauncher;
 
 // ----------------------------------------------------------------------------
 // When compiling for web:
