@@ -1,22 +1,31 @@
 use eframe::{egui, epi};
-use egui_extras::RetainedImage;
 use crate::json::*;
-
+use open;
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct ProcelioLauncher {
-    readmeAccepted: bool,
-    installDir: Option<std::path::PathBuf>,
-    useDevBuilds: bool,
+    readme_accepted: i32,
+    install_dir: Option<std::path::PathBuf>,
+    use_dev_builds: bool,
     #[serde(skip)]
     config: LauncherConfigStatus,
     #[serde(skip)]
     error: Option<Box<dyn std::error::Error>>,
     #[serde(skip)]
     refs: ResourceRefs,
+    #[serde(skip)]
+    settings: bool,
+    #[serde(skip)]
+    licenses: bool,
+    #[serde(skip)]
+    viewed_changelog: usize,
+    #[serde(skip)]
+    processing_status: Option<std::sync::Arc<std::sync::Mutex<(f32, String)>>>
 }
 
+const CURRENT_README: i32 = 4534;
+const LICENSE: &str = include_str!("resources/licenses.txt");
 pub struct ResourceRefs {
     pub procelio_logo: Option<egui::TextureHandle>,
     pub discord_logo: Option<egui::TextureHandle>,
@@ -81,17 +90,31 @@ impl ResourceRefs {
 impl Default for ProcelioLauncher {
     fn default() -> Self {
         Self {
-            readmeAccepted: false,
-            installDir: None,
-            useDevBuilds: false,
+            readme_accepted: 0,
+            install_dir: None,
+            use_dev_builds: false,
             config: LauncherConfigStatus::AppLoad,
             error: None,
+            settings: false,
+            licenses: false,
+            viewed_changelog: 0,
+            processing_status: None,
             refs: ResourceRefs::new()
         }
     }
 }
 
+impl ProcelioLauncher {
+    fn uvize(rect: egui::Rect, width: f32, height: f32) -> egui::Rect {
+        egui::Rect::from_two_pos(
+            egui::pos2(rect.min.x / width, rect.min.y / height),
+            egui::pos2(rect.max.x / width, rect.max.y / height)
+        )
+    }
+}
+
 impl epi::App for ProcelioLauncher {
+
     fn name(&self) -> &str {
         "Procelio Launcher"
     }
@@ -105,6 +128,9 @@ impl epi::App for ProcelioLauncher {
         let (s, r) = std::sync::mpsc::channel();
         self.config = LauncherConfigStatus::Pending(r);
         crate::net::get_config(s);
+        if let None = self.install_dir {
+            self.settings = true;
+        }
     }
 
     /// Called by the frame work to save state before shutdown.
@@ -114,7 +140,7 @@ impl epi::App for ProcelioLauncher {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
-    fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &epi::Frame) {
         if let LauncherConfigStatus::Pending(recv) = &mut self.config {
             if let Ok(a) = recv.try_recv() {
                 match a {
@@ -129,15 +155,38 @@ impl epi::App for ProcelioLauncher {
             }
         }
 
-        frame.set_window_size(egui::vec2(960.0, 540.0));
-        let bgtex = self.refs.get_background(ctx);
-        let img = egui::Image::new(bgtex, bgtex.size_vec2());
-        let imgrect = egui::Rect::from_two_pos(egui::pos2(0.0, 0.0), egui::pos2(960.0, 540.0));
-     //   egui::Area::new("img").order(egui::Order::Background).show(ctx, |ui| {
-     //       img.paint_at(ui, imgrect);//, rect)
-     //   });
+        if self.readme_accepted != CURRENT_README{
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let s = "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
+                ui.label(s);
+                let mut b = false;
+                ui.checkbox(&mut b, "I accept");
+                if b {
+                    self.readme_accepted = CURRENT_README
+                }
+            });
+            return;
+        }
+        
+        let col = egui::Color32::from_rgba_premultiplied(32, 32, 32, 128);
+        let col2 = egui::Color32::from_rgb(212, 212, 212);
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        let nomargin = egui::Frame::default().margin(egui::vec2(1.0, 1.0));
+        let bgtex = self.refs.get_background(ctx);
+        let bgwidth = bgtex.size_vec2().x;
+        let bgheight = bgtex.size_vec2().y;
+        
+        let mut top_height = 0.0;
+        let mut bottom_height = 0.0;
+        let left_width = 0.0;
+        let right_width = 0.0;
+
+        let img = egui::Image::new(bgtex, bgtex.size_vec2());
+
+        egui::TopBottomPanel::top("top_panel").resizable(false).frame(nomargin).show(ctx, |ui| {
+            top_height = ui.available_height();
+            let rect = egui::Rect::from_two_pos(egui::pos2(0.0, 0.0), egui::pos2(bgwidth, top_height));
+            img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 let tex = self.refs.get_procelio_logo(ui);
                 ui.image(tex, tex.size_vec2());
@@ -145,74 +194,214 @@ impl epi::App for ProcelioLauncher {
             });
         });
 
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("bottom_panel").frame(nomargin).resizable(false).show(ctx, |ui| {
+            bottom_height = ui.available_height();
+            let rect = egui::Rect::from_two_pos(egui::pos2(0.0, 540.0 - bottom_height), egui::pos2(960.0, 540.0));
+            img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
+            ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
+                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
+                    let launch = egui::widgets::Button::new(egui::RichText::new(" PLAY ").size(48.)).fill(egui::Color32::from_rgb(255, 117, 0));
+                    ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
+                        ui.add_space(1.0);
+                        if ui.add(launch).clicked() && self.processing_status.is_none() {
+                            if let Some(s1) = &self.install_dir {
+                                if let LauncherConfigStatus::Loaded(s2) = &self.config {
+                                    let mutex = std::sync::Arc::new(std::sync::Mutex::new((0., "pending".to_owned())));
+                                    self.processing_status = Some(mutex.clone());
+                                    crate::net::play_clicked(s1.to_path_buf(), self.use_dev_builds, s2.to_owned(), mutex);
+                                }
+                            }
+                        }
+                    });
 
-            ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
-                let launch = egui::widgets::Button::new(" LAUNCH ").fill(egui::Color32::from_rgb(255, 117, 0));
-                let mut launch_style = ui.style_mut().clone();
-                launch_style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(48.0));
-                ui.set_style(launch_style);
-                // ui.set_fonts(egui::TextStyle::Name("Launch".into()))
-               
-                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
-                    ui.add_space(1.0);
-                    if ui.add(launch).clicked() {
-                        // TODO
-                    }
-                });
+                    ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
+                        if ui.button(egui::RichText::new("      SETTINGS      ").size(24.)).clicked() {
+                            self.settings = true;
+                        }
 
-                ui.reset_style();
-                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
-                    let mut settings_style = ui.style_mut().clone();
-                    settings_style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(24.0));
-                    ui.set_style(settings_style);
-                    if ui.button("      SETTINGS      ").clicked() {
-                        // TODO
-                    }
+                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
+                            let twitter = self.refs.get_twitter_logo(ui);
+                            let size = twitter.size_vec2();
+                            let size = egui::vec2(size.x / 1.5, size.y / 1.5);
+                            if ui.add(egui::widgets::ImageButton::new(twitter, size)).clicked() {
+                                println!("Clicked on Twitter");
+                                if let Err(e) = open::that("https://twitter.com/proceliogame?lang=en") {
+                                    self.error = Some(Box::new(e));
+                                }
+                            }
+        
+                            let youtube = self.refs.get_youtube_logo(ui);
+                            if ui.add(egui::widgets::ImageButton::new(youtube, size)).clicked() {
+                                println!("Clicked on Youtube");
+                                if let Err(e) = open::that("https://www.youtube.com/channel/UCb9SlKVDpFMb3_BkcTNv8SQ") {
+                                    self.error = Some(Box::new(e));
+                                }
+                            }
 
-                    ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
-                        let twitter = self.refs.get_twitter_logo(ui);
-                        let size = twitter.size_vec2();
-                        let size = egui::vec2(size.x / 1.5, size.y / 1.5);
-                        ui.add(egui::widgets::ImageButton::new(twitter, size));
-    
-                        let youtube = self.refs.get_youtube_logo(ui);
-                        ui.add(egui::widgets::ImageButton::new(youtube, size));
-
-                        let discord = self.refs.get_discord_logo(ui);
-                        ui.add(egui::widgets::ImageButton::new(discord, size));
+                            let discord = self.refs.get_discord_logo(ui);
+                            if ui.add(egui::widgets::ImageButton::new(discord, size)).clicked() {
+                                println!("Clicked on Discord");
+                                if let Err(e) = open::that("https://discord.gg/TDWKZzf") {
+                                        self.error = Some(Box::new(e));
+                                }
+                            }
+                        });
                     });
                 });
+                if let Some(s) = &self.processing_status {
+                    let state = s.lock().unwrap();
+                    egui::containers::Frame {
+                        margin: egui::style::Margin { left: 5., right: 5., top: 0., bottom: 0. },
+                        rounding: egui::Rounding { nw: 5.0, ne: 5.0, sw: 5.0, se: 5.0 },
+                        shadow: eframe::epaint::Shadow::default(),
+                        fill: col,
+                        stroke: egui::Stroke::default()
+                    }.show(ui, |ui| {
+                        ui.add(egui::widgets::ProgressBar::new(state.0).text(&state.1).animate(true));
+                    });
+                }
             });
-        });
-
-        egui::SidePanel::left("side_panel").show(ctx, |ui| {
-            ui.heading("Side Panel");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-           //     ui.text_edit_singleline(label);
-            });
-
-            //ui.add(egui::Slider::new(value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-           //     *value += 1.0;
-            }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label("powered by ");
+                    ui.label("Built with ");
                     ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-                    ui.label(" and ");
-                    ui.hyperlink_to("eframe", "https://github.com/emilk/egui/tree/master/eframe");
                 });
             });
         });
+        
+        egui::CentralPanel::default().frame(nomargin).show(ctx, |ui| {
+            let rect = egui::Rect::from_two_pos(egui::pos2(left_width, top_height), egui::pos2(bgwidth - right_width, bgheight - bottom_height));
+            img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.columns(3, |ui| {
+                if let LauncherConfigStatus::Loaded(x) = &self.config {
+                    egui::containers::Frame {
+                        margin: egui::style::Margin { left: 5., right: 5., top: 10., bottom: 10. },
+                        rounding: egui::Rounding { nw: 5.0, ne: 5.0, sw: 5.0, se: 5.0 },
+                        shadow: eframe::epaint::Shadow::default(),
+                        fill: col,
+                        stroke: egui::Stroke::default()
+                    }.show(&mut ui[0], |ui| {
+                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::Center), |ui| {
+                            ui.label(egui::RichText::new("Message").size(24.0).strong().color(col2).underline());
+                        });
+                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::LEFT), |ui| {
+                            ui.label(egui::RichText::new(format!("{}", x.quoteOfTheDay)).size(20.0).strong().color(col2));
+                        });
+                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::Center), |ui| {
+                            ui.label(egui::RichText::new(format!("-- {}", x.quoteAuthor)).size(20.0).strong().color(col2));
+                        });
+                    });
+
+                    egui::containers::Frame {
+                        margin: egui::style::Margin { left: 5., right: 5., top: 10., bottom: 10. },
+                        rounding: egui::Rounding { nw: 5.0, ne: 5.0, sw: 5.0, se: 5.0 },
+                        shadow: eframe::epaint::Shadow::default(),
+                        fill: col,
+                        stroke: egui::Stroke::default()
+                    }.show(&mut ui[2], |ui| {
+                        ui.allocate_ui(egui::vec2(0., 240.), |ui| {
+                            let upd = &x.updates[x.updates.len() - 1 - self.viewed_changelog];
+                            ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::Center), |ui| {
+                                ui.label(egui::RichText::new(format!("Procelio v{}", upd.version.iter().map(|x|x.to_string()).collect::<Vec<String>>().join("."))).size(24.0).underline().strong().color(col2));
+                                ui.label(egui::RichText::new(format!("{}", upd.title)).size(16.0).strong().color(col2).underline());
+                            });
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::LEFT), |ui| {
+                                    ui.label(egui::RichText::new(format!("{}", upd.description)).size(16.0).color(col2));
+                                });
+                            });
+                            
+                            if ui.available_height() - 30. > 0. {
+                                ui.add_space(ui.available_height() - 30.)
+                            }
+
+                            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui|{
+                                ui.columns(2, |ui| {
+                                    if self.viewed_changelog < x.updates.len() - 1 {
+                                        ui[0].with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                                            if ui.button(egui::RichText::new("<-").strong().color(col2)).clicked() {
+                                                self.viewed_changelog += 1;
+                                            }
+                                        });
+                                    }
+                                    if self.viewed_changelog > 0 {
+                                        ui[1].with_layout(egui::Layout::top_down(egui::Align::RIGHT), |ui| {
+                                            if ui.button(egui::RichText::new("->").strong().color(col2)).clicked() {
+                                                self.viewed_changelog -= 1;
+                                            }
+                                        });
+                                    }
+                                });
+
+                                if ui.button(egui::RichText::new(format!("View Full Changelog")).size(16.).color(col2).strong()).clicked() {
+                                    if let Err(e) = open::that(&upd.hyperlink) {
+                                        self.error = Some(Box::new(e));
+                                    }
+                                }
+                            });
+                        });
+                    });
+                 }
+            });
             egui::warn_if_debug_build(ui);
         });
+
+        if let None = self.install_dir {
+            egui::Window::new("install-window").show(ctx, |ui| {
+                ui.label("Select Procelio Installation Directory:");
+                ui.horizontal(|ui| {
+                    if ui.button("Install To: ").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            if path.is_dir() {
+                                self.install_dir = Some(path);
+                            }
+                        }
+                    }
+                    ui.code(format!("{}", self.install_dir.as_ref().map(|x|x.as_os_str().to_string_lossy().into_owned()).unwrap_or("".to_owned())));
+                });
+            });
+        }
+        if self.settings {
+            egui::Window::new("settings-window").show(ctx, |ui| {
+                ui.label("Settings:");
+                ui.checkbox(&mut self.use_dev_builds, "Enable Dev Builds");
+
+                ui.horizontal(|ui| {
+                    if ui.button("Install To: ").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            if path.is_dir() {
+                                self.install_dir = Some(path);
+                            }
+                        }
+                    }
+                    ui.code(format!("{}", self.install_dir.as_ref().map(|x|x.as_os_str().to_string_lossy().into_owned()).unwrap_or("".to_owned())));
+                });
+
+                if ui.button("View Licenses").clicked() {
+                    self.licenses = true;
+                }
+                if ui.button("Done").clicked() {
+                    self.settings = false;
+                }
+            });
+        }
+
+        if self.licenses {
+            egui::Window::new("license-window").show(ctx, |ui| {
+                ui.label("Licenses & Dependencies:");
+
+                egui::ScrollArea::both().max_height(256.).show(ui, |ui| {
+                    ui.label(LICENSE);
+                });
+
+                if ui.button("Done").clicked() {
+                    self.licenses = false;
+                }
+            });
+        }
 
         if let Some(x) = self.error.as_ref().map(|x| format!("{:?}", x)) {
             egui::Window::new("error-window").show(ctx, |ui| {

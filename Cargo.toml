@@ -19,12 +19,13 @@ crate-type = ["cdylib", "rlib"]
 eframe = "0.17.0" # Gives us egui, epi and web+native backends
 egui_extras = { version = "0.17.0", features = ["image"] }
 image = { version = "0.24", features = ["jpeg", "png"] }
+open = "2.1.1"
 
 reqwest = { version = "0.11.10", features = ["blocking", "json"] }
 anyhow = "1.0.57"
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
-
+rfd = "0.8.2"
 [features]
 default = ["eframe/persistence", "serde"]
 
