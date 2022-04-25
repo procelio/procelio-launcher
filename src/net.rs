@@ -14,9 +14,9 @@ pub fn get_config(send: Sender<Result<LauncherConfiguration, reqwest::Error>>) {
 
 pub fn play_clicked(dir: std::path::PathBuf, use_dev: bool, config: LauncherConfiguration, process: std::sync::Arc<std::sync::Mutex<(f32, String)>>) {
     thread::spawn(move || {
-        
+        println!("{:?}", dir);
+        println!("{:?}", use_dev);
+        println!("{:?}", config);
+        println!("{:?}", process);
     });
-
-
-
 }

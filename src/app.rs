@@ -288,10 +288,10 @@ impl epi::App for ProcelioLauncher {
                             ui.label(egui::RichText::new("Message").size(24.0).strong().color(col2).underline());
                         });
                         ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::LEFT), |ui| {
-                            ui.label(egui::RichText::new(format!("{}", x.quoteOfTheDay)).size(20.0).strong().color(col2));
+                            ui.label(egui::RichText::new(format!("{}", x.quote_of_the_day)).size(20.0).strong().color(col2));
                         });
                         ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::Center), |ui| {
-                            ui.label(egui::RichText::new(format!("-- {}", x.quoteAuthor)).size(20.0).strong().color(col2));
+                            ui.label(egui::RichText::new(format!("-- {}", x.quote_author)).size(20.0).strong().color(col2));
                         });
                     });
 
