@@ -1,11 +1,10 @@
-use reqwest::blocking::{self, Response};
+use reqwest::blocking;
 use crate::json::{LauncherConfiguration, GameVersion, PatchList};
-use std::{sync::mpsc::Sender, io::BufReader};
+use std::sync::mpsc::Sender;
 use std::thread;
 use crate::files::{LoadingFileSource, LoadedFileSource};
 use std::boxed::Box;
-use serde::{Serialize, Deserialize};
-use std::io::{Read, BufRead};
+use std::io::Read;
 use sha2::{Sha512, Digest};
 
 fn os_header() -> &'static str {
@@ -16,7 +15,7 @@ fn os_header() -> &'static str {
     { "linux" }
 }
 
-pub fn with_os_header(mut req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+pub fn with_os_header(req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
     req.header("X-Operating-System", os_header())
 }
 
@@ -124,8 +123,4 @@ pub fn redownload(send: Sender<Result<(), anyhow::Error>>) {
     thread::spawn(move || {//"ProcelioLauncher.exe"
         send.send(redownload_internal()).unwrap();
     });
-}
-
-pub fn download_new(dir: std::path::PathBuf, use_dev: bool, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) {
-
 }
