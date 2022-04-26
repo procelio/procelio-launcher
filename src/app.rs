@@ -388,6 +388,7 @@ impl epi::App for ProcelioLauncher {
                     });
                 });
                 if let Some(s) = &self.states.processing_status {
+                    ctx.request_repaint();
                     let mut state = s.lock().unwrap();
                     if state.2.is_some() {
                         self.states.error = std::mem::take(&mut state.2);
