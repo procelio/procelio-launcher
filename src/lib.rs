@@ -5,6 +5,9 @@
 mod app;
 pub mod json;
 pub mod net;
+pub mod patch;
+pub mod files;
+pub mod defs;
 pub use app::ProcelioLauncher;
 
 // ----------------------------------------------------------------------------

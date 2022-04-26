@@ -26,6 +26,14 @@ anyhow = "1.0.57"
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
 rfd = "0.8.2"
+sha2 = "0.10.2"
+tempfile = "3.3.0"
+regex = "1"
+zip = "0.5"
+hex = "0.4"
+shell-words = "1.1.0"
+walkdir = "2"
+proceliotool = { version = "0.1.0", path = "../procelio-files/proceliotool" }
 [features]
 default = ["eframe/persistence", "serde"]
 

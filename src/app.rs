@@ -1,5 +1,6 @@
 use eframe::{egui, epi};
 use crate::json::*;
+use crate::defs;
 use open;
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -9,10 +10,6 @@ pub struct ProcelioLauncher {
     install_dir: Option<std::path::PathBuf>,
     use_dev_builds: bool,
     #[serde(skip)]
-    config: LauncherConfigStatus,
-    #[serde(skip)]
-    error: Option<Box<dyn std::error::Error>>,
-    #[serde(skip)]
     refs: ResourceRefs,
     #[serde(skip)]
     settings: bool,
@@ -21,11 +18,42 @@ pub struct ProcelioLauncher {
     #[serde(skip)]
     viewed_changelog: usize,
     #[serde(skip)]
-    processing_status: Option<std::sync::Arc<std::sync::Mutex<(f32, String)>>>
+    states: Ephemeral,
+    #[serde(skip)]
+    launcher_name: String,
 }
 
-const CURRENT_README: i32 = 4534;
-const LICENSE: &str = include_str!("resources/licenses.txt");
+pub struct Ephemeral {
+    config: LoadStatus<LauncherConfiguration>,
+    launcher_redownload: LoadStatus<()>,
+    launching: LoadStatus<()>,
+    uninstall: LoadStatus<()>,
+
+    error: Option<Box<anyhow::Error>>,
+    processing_status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>
+}
+
+impl Ephemeral {
+    pub fn new() -> Ephemeral {
+        Ephemeral { 
+            config: LoadStatus::AppLoad, 
+            launcher_redownload: LoadStatus::AppLoad,
+            uninstall: LoadStatus::AppLoad,
+            launching: LoadStatus::AppLoad,
+            error: None, 
+            processing_status: None }
+    }
+
+    pub fn ok_to_play(&self) -> bool {
+        let launcher = match self.launcher_redownload {
+            LoadStatus::AppLoad => true,
+            _ => false
+        };
+        let game = self.processing_status.is_none();
+        launcher && game
+    }
+}
+
 pub struct ResourceRefs {
     pub procelio_logo: Option<egui::TextureHandle>,
     pub discord_logo: Option<egui::TextureHandle>,
@@ -90,16 +118,15 @@ impl ResourceRefs {
 impl Default for ProcelioLauncher {
     fn default() -> Self {
         Self {
+            launcher_name: format!("Procelio Launcher v{}", defs::version_str(&defs::version())),
             readme_accepted: 0,
             install_dir: None,
             use_dev_builds: false,
-            config: LauncherConfigStatus::AppLoad,
-            error: None,
             settings: false,
             licenses: false,
             viewed_changelog: 0,
-            processing_status: None,
-            refs: ResourceRefs::new()
+            refs: ResourceRefs::new(),
+            states: Ephemeral::new()
         }
     }
 }
@@ -111,12 +138,139 @@ impl ProcelioLauncher {
             egui::pos2(rect.max.x / width, rect.max.y / height)
         )
     }
+
+    fn check_states(&mut self, ctx: &egui::Context, frame: &epi::Frame) -> bool {
+        if let LoadStatus::Pending(recv) = &mut self.states.config {
+            if let Ok(a) = recv.try_recv() {
+                match a {
+                    Ok(cfg) => {
+                        if cfg.launcher_version != defs::version() {
+                            self.states.launcher_redownload = LoadStatus::AwaitingApproval;
+                        }
+                        self.states.config = LoadStatus::Loaded(cfg);
+                    },
+                    Err(e) => {
+                        self.states.error = Some(std::boxed::Box::new(e.into()))
+                    }
+                };
+            }
+        }
+
+        if let LoadStatus::AwaitingApproval = &mut self.states.launcher_redownload {
+            egui::Window::new("Approve Launcher Update?").show(ctx, |ui| {
+                if let LoadStatus::Loaded(x) = &self.states.config {
+                    ui.label(format!("The launcher will download and update to version {}", &defs::version_str(&x.launcher_version)));
+                    if ui.button("OK").clicked() {
+                        let (s, r) = std::sync::mpsc::channel();
+                        self.states.launcher_redownload = LoadStatus::Pending(r);
+                        crate::net::redownload(s);
+                    }
+                    if ui.button("Quit").clicked() {
+                        frame.quit();
+                        std::process::exit(1);
+                    }
+                } else { panic!(); }
+            });
+            return true;
+        }
+
+        if let LoadStatus::Pending(recv) = &mut self.states.launcher_redownload {
+            if let Ok(a) = recv.try_recv() {
+                match a {
+                    Ok(_) => {
+                        self.states.launcher_redownload = LoadStatus::Loaded(());
+                    },
+                    Err(e) => {
+                        self.states.error = Some(std::boxed::Box::new(e.into()))
+                    }
+                };
+            }
+            return true;
+        }
+
+        if let LoadStatus::Loaded(()) = self.states.launcher_redownload {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.label("The launcher will now restart");
+                let mut b = false;
+                ui.checkbox(&mut b, "OK");
+                if b {
+                    frame.quit();
+                }
+            });
+            return true;
+        }
+
+        if let LoadStatus::AwaitingApproval = self.states.uninstall {
+            if let Some(path) = &self.install_dir {
+                if self.states.ok_to_play() {
+                    egui::Window::new("Confirm Procelio Uninstall?").show(ctx, |ui| {
+                        ui.label(format!("The game will be uninstalled at {:?}", path.display()));
+                        if ui.button("OK").clicked() {
+                            let mutex = std::sync::Arc::new(std::sync::Mutex::new((0., "Uninstalling".to_owned(), None)));
+                            self.states.processing_status = Some(mutex.clone());
+
+                            let (send, recv) = std::sync::mpsc::channel();
+                            self.states.uninstall = LoadStatus::Pending(recv);
+                            crate::patch::uninstall(path.to_owned(), mutex, send);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.states.uninstall = LoadStatus::AppLoad;
+                        }
+                    });
+                    return true;
+                }
+            }
+        }
+        
+        if let LoadStatus::Pending(recv) = &mut self.states.uninstall {
+            if let Ok(a) = recv.try_recv() {
+                match a {
+                    Ok(_) => {
+                        self.states.uninstall = LoadStatus::AppLoad;
+                        self.states.processing_status = None;
+                    },
+                    Err(e) => {
+                        self.states.error = Some(std::boxed::Box::new(e.into()))
+                    }
+                };
+            }
+        }
+
+        if let LoadStatus::Pending(recv) = &mut self.states.launching {
+            if let Ok(a) = recv.try_recv() {
+                match a {
+                    Ok(_) => {
+                        self.states.launching = LoadStatus::AppLoad;
+                        self.states.processing_status = None;
+                    },
+                    Err(e) => {
+                        self.states.error = Some(std::boxed::Box::new(e.into()))
+                    }
+                };
+            }
+        }
+        
+        if self.readme_accepted != defs::CURRENT_README{
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let s = "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
+                ui.label(s);
+                let mut b = false;
+                ui.checkbox(&mut b, "I accept");
+                if b {
+                    self.readme_accepted = defs::CURRENT_README
+                }
+            });
+            return true;
+        }
+
+        false
+    }
 }
 
 impl epi::App for ProcelioLauncher {
 
     fn name(&self) -> &str {
-        "Procelio Launcher"
+       &self.launcher_name
     }
 
     /// Called once before the first frame.
@@ -126,10 +280,13 @@ impl epi::App for ProcelioLauncher {
         }
 
         let (s, r) = std::sync::mpsc::channel();
-        self.config = LauncherConfigStatus::Pending(r);
+        self.states.config = LoadStatus::Pending(r);
         crate::net::get_config(s);
         if let None = self.install_dir {
             self.settings = true;
+        }
+        if let Err(e) = crate::patch::delete_old_launcher() {
+            self.states.error = Some(Box::new(e));
         }
     }
 
@@ -138,36 +295,15 @@ impl epi::App for ProcelioLauncher {
         epi::set_value(storage, epi::APP_KEY, self);
     }
 
+    
+
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
-    fn update(&mut self, ctx: &egui::Context, _frame: &epi::Frame) {
-        if let LauncherConfigStatus::Pending(recv) = &mut self.config {
-            if let Ok(a) = recv.try_recv() {
-                match a {
-                    Ok(cfg) => {
-                        self.config = LauncherConfigStatus::Loaded(cfg);
-                    },
-                    Err(e) => {
-                        println!("{:?}", e);
-                        self.error = Some(std::boxed::Box::new(e))
-                    }
-                };
-            }
-        }
-
-        if self.readme_accepted != CURRENT_README{
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let s = "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
-                ui.label(s);
-                let mut b = false;
-                ui.checkbox(&mut b, "I accept");
-                if b {
-                    self.readme_accepted = CURRENT_README
-                }
-            });
+    fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
+        if self.check_states(ctx, frame) {
             return;
         }
-        
+
         let col = egui::Color32::from_rgba_premultiplied(32, 32, 32, 128);
         let col2 = egui::Color32::from_rgb(212, 212, 212);
 
@@ -203,12 +339,15 @@ impl epi::App for ProcelioLauncher {
                     let launch = egui::widgets::Button::new(egui::RichText::new(" PLAY ").size(48.)).fill(egui::Color32::from_rgb(255, 117, 0));
                     ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
                         ui.add_space(1.0);
-                        if ui.add(launch).clicked() && self.processing_status.is_none() {
+                        if ui.add(launch).clicked() && self.states.ok_to_play() {
                             if let Some(s1) = &self.install_dir {
-                                if let LauncherConfigStatus::Loaded(s2) = &self.config {
-                                    let mutex = std::sync::Arc::new(std::sync::Mutex::new((0., "pending".to_owned())));
-                                    self.processing_status = Some(mutex.clone());
-                                    crate::net::play_clicked(s1.to_path_buf(), self.use_dev_builds, s2.to_owned(), mutex);
+                                if let LoadStatus::Loaded(_) = &self.states.config {
+                                    let (s, r) = std::sync::mpsc::channel();
+                                    self.states.launching = LoadStatus::Pending(r);
+
+                                    let mutex = std::sync::Arc::new(std::sync::Mutex::new((0., "pending".to_owned(), None)));
+                                    self.states.processing_status = Some(mutex.clone());
+                                    crate::patch::play_clicked(s1.to_path_buf(), self.use_dev_builds, mutex, s);
                                 }
                             }
                         }
@@ -226,7 +365,7 @@ impl epi::App for ProcelioLauncher {
                             if ui.add(egui::widgets::ImageButton::new(twitter, size)).clicked() {
                                 println!("Clicked on Twitter");
                                 if let Err(e) = open::that("https://twitter.com/proceliogame?lang=en") {
-                                    self.error = Some(Box::new(e));
+                                    self.states.error = Some(Box::new(anyhow::Error::new(e)));
                                 }
                             }
         
@@ -234,7 +373,7 @@ impl epi::App for ProcelioLauncher {
                             if ui.add(egui::widgets::ImageButton::new(youtube, size)).clicked() {
                                 println!("Clicked on Youtube");
                                 if let Err(e) = open::that("https://www.youtube.com/channel/UCb9SlKVDpFMb3_BkcTNv8SQ") {
-                                    self.error = Some(Box::new(e));
+                                    self.states.error = Some(Box::new(anyhow::Error::new(e)));
                                 }
                             }
 
@@ -242,14 +381,17 @@ impl epi::App for ProcelioLauncher {
                             if ui.add(egui::widgets::ImageButton::new(discord, size)).clicked() {
                                 println!("Clicked on Discord");
                                 if let Err(e) = open::that("https://discord.gg/TDWKZzf") {
-                                        self.error = Some(Box::new(e));
+                                        self.states.error = Some(Box::new(anyhow::Error::new(e)));
                                 }
                             }
                         });
                     });
                 });
-                if let Some(s) = &self.processing_status {
-                    let state = s.lock().unwrap();
+                if let Some(s) = &self.states.processing_status {
+                    let mut state = s.lock().unwrap();
+                    if state.2.is_some() {
+                        self.states.error = std::mem::take(&mut state.2);
+                    }
                     egui::containers::Frame {
                         margin: egui::style::Margin { left: 5., right: 5., top: 0., bottom: 0. },
                         rounding: egui::Rounding { nw: 5.0, ne: 5.0, sw: 5.0, se: 5.0 },
@@ -276,7 +418,7 @@ impl epi::App for ProcelioLauncher {
             img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
 
             ui.columns(3, |ui| {
-                if let LauncherConfigStatus::Loaded(x) = &self.config {
+                if let LoadStatus::Loaded(x) = &self.states.config {
                     egui::containers::Frame {
                         margin: egui::style::Margin { left: 5., right: 5., top: 10., bottom: 10. },
                         rounding: egui::Rounding { nw: 5.0, ne: 5.0, sw: 5.0, se: 5.0 },
@@ -338,7 +480,7 @@ impl epi::App for ProcelioLauncher {
 
                                 if ui.button(egui::RichText::new(format!("View Full Changelog")).size(16.).color(col2).strong()).clicked() {
                                     if let Err(e) = open::that(&upd.hyperlink) {
-                                        self.error = Some(Box::new(e));
+                                        self.states.error = Some(Box::new(anyhow::Error::new(e)));
                                     }
                                 }
                             });
@@ -383,6 +525,9 @@ impl epi::App for ProcelioLauncher {
                 if ui.button("View Licenses").clicked() {
                     self.licenses = true;
                 }
+                if ui.button(egui::RichText::new("Uninstall Procelio").color(egui::Color32::RED)).clicked() && self.states.ok_to_play() {
+                    self.states.uninstall = LoadStatus::AwaitingApproval;
+                }
                 if ui.button("Done").clicked() {
                     self.settings = false;
                 }
@@ -394,7 +539,7 @@ impl epi::App for ProcelioLauncher {
                 ui.label("Licenses & Dependencies:");
 
                 egui::ScrollArea::both().max_height(256.).show(ui, |ui| {
-                    ui.label(LICENSE);
+                    ui.label(defs::LICENSE);
                 });
 
                 if ui.button("Done").clicked() {
@@ -403,12 +548,12 @@ impl epi::App for ProcelioLauncher {
             });
         }
 
-        if let Some(x) = self.error.as_ref().map(|x| format!("{:?}", x)) {
+        if let Some(x) = self.states.error.as_ref().map(|x| format!("{:?}", x)) {
             egui::Window::new("error-window").show(ctx, |ui| {
                 ui.label("Error:");
                 ui.label(format!("{:?}",x));
                 if ui.button("OK").clicked() {
-                    self.error = None;
+                    self.states.error = None;
                 }
             });
         }
