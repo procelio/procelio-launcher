@@ -97,22 +97,25 @@ fn apply_patch(dir: &std::path::PathBuf, patch: String, process: std::sync::Arc<
     Ok(get_installed_version(dir)?)
 }
 
-fn launch_game(manifest: Option<InstallManifest>, dir: std::path::PathBuf) -> Result<(), anyhow::Error> {
+fn launch_game(manifest: Option<InstallManifest>, dir: std::path::PathBuf) -> Result<Option<std::process::Child>, anyhow::Error> {
     let manifest = match manifest {
         Some(s) => s,
         None => { return Err(anyhow::Error::msg("Unable to load launch manifest")); }
     };
-    
     let args = crate::net::get_args(manifest.dev)?;
-    std::process::Command::new(dir.join(manifest.exec))
-        .args(shell_words::split(&args)?)
-        .spawn()?;
     println!("Launch Game");
-    Ok(())
+
+    let arg = shell_words::split(&args)?;
+    thread::spawn(move || {
+        std::process::Command::new(dir.join(manifest.exec))
+        .args(arg)
+        .output().unwrap();
+    });
+    Ok(None)
 }
 
 
-pub fn play_clicked_internal(dir: std::path::PathBuf, use_dev: bool, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<(), anyhow::Error> {
+pub fn play_clicked_internal(dir: std::path::PathBuf, use_dev: bool, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<std::process::Child>, anyhow::Error> {
     proceliotool::tools::patch::check_rollback(&dir)?;
     let mut installed_version = match get_installed_version(&dir)? {
         Some(s) => s,
@@ -136,8 +139,7 @@ pub fn play_clicked_internal(dir: std::path::PathBuf, use_dev: bool, process: st
             installed_version = s;
         }
     }
-    launch_game(Some(installed_version), dir)?;
-    Ok(())
+    launch_game(Some(installed_version), dir)
 }
 
 pub fn play_clicked(
@@ -147,10 +149,19 @@ pub fn play_clicked(
     send: std::sync::mpsc::Sender<Result<(), anyhow::Error>>
 ) {
     thread::spawn(move || {
-        if let Err(e) = play_clicked_internal(dir, use_dev, process.clone()) {
-            process.lock().unwrap().2 = Some(Box::new(e));
-        } 
-        send.send(Ok(())).unwrap();
+        let res = play_clicked_internal(dir, use_dev, process.clone());
+        match res {
+            Err(e) => {
+                process.lock().unwrap().2 = Some(Box::new(e));
+                send.send(Ok(())).unwrap();
+            }
+            Ok(c) => {
+                if let Some(mut z) = c {
+                    z.wait().unwrap();
+                }
+                send.send(Ok(())).unwrap();
+            }
+        }
     });
 }
 

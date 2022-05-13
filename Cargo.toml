@@ -40,14 +40,9 @@ default = ["eframe/persistence", "serde"]
 [profile.release]
 opt-level = 2 # fast and small wasm
 
-[patch.crates-io]
-
-# If you want to use the bleeding edge version of `egui`:
-# eframe = { git = "https://github.com/emilk/egui", branch = "master" }
-
-# If you fork https://github.com/emilk/egui you can test with:
-# eframe = { path = "../egui/eframe" }
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.6"
 tracing-wasm = "0.2"
+
+[build-dependencies]
+winres = "0.1"

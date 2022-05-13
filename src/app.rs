@@ -118,7 +118,7 @@ impl ResourceRefs {
 impl Default for ProcelioLauncher {
     fn default() -> Self {
         Self {
-            launcher_name: format!("Procelio Launcher v{}", defs::version_str(&defs::version())),
+            launcher_name: format!("Procelio Launcher"),
             readme_accepted: 0,
             install_dir: None,
             use_dev_builds: false,
@@ -304,7 +304,7 @@ impl epi::App for ProcelioLauncher {
             return;
         }
 
-        let col = egui::Color32::from_rgba_premultiplied(32, 32, 32, 128);
+        let col = egui::Color32::from_rgba_premultiplied(32, 32, 32, 200);
         let col2 = egui::Color32::from_rgb(212, 212, 212);
 
         let nomargin = egui::Frame::default().margin(egui::vec2(1.0, 1.0));
@@ -336,7 +336,7 @@ impl epi::App for ProcelioLauncher {
             img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
             ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
                 ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
-                    let launch = egui::widgets::Button::new(egui::RichText::new(" PLAY ").size(48.)).fill(egui::Color32::from_rgb(255, 117, 0));
+                    let launch = egui::widgets::Button::new(egui::RichText::new(" PLAY ").size(48.).strong().color(egui::Color32::from_rgb(38, 38, 38))).fill(egui::Color32::from_rgb(255, 117, 0));
                     ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
                         ui.add_space(1.0);
                         if ui.add(launch).clicked() && self.states.ok_to_play() {
@@ -407,9 +407,11 @@ impl epi::App for ProcelioLauncher {
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
+                    let col = egui::Color32::from_rgb(225, 225, 225);
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label("Built with ");
-                    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
+                    ui.label(egui::RichText::new(format!("Launcher v{}  |  ", defs::version_str(&defs::version()))).color(col));
+                    ui.label(egui::RichText::new("Built with ").color(col));
+                    ui.hyperlink_to(egui::RichText::new("egui").strong(), "https://github.com/emilk/egui");
                 });
             });
         });

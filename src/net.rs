@@ -67,6 +67,7 @@ pub fn get_file(url: &str, hash_url: Option<String>, status: Option<std::sync::A
     
     if let Some(s) = &status {
         let mut lock = s.lock().unwrap();
+        println!("downloading {}", &url);
         lock.1 = format!("Downloading {}", &url);
     }
 
