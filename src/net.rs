@@ -1,5 +1,5 @@
 use reqwest::blocking;
-use crate::json::{LauncherConfiguration, GameVersion, PatchList};
+use crate::json::{GameVersion, PatchList, LauncherConfig, ConfigResponse, UpgradePath};
 use std::sync::mpsc::Sender;
 use std::thread;
 use crate::files::{LoadingFileSource, LoadedFileSource};
@@ -7,57 +7,64 @@ use std::boxed::Box;
 use std::io::Read;
 use sha2::{Sha512, Digest};
 
-fn os_header() -> &'static str {
+fn platform() -> &'static str {
     #[cfg(windows)]
-    { "windows" }
+    { "win" }
 
     #[cfg(not(windows))]
     { "linux" }
 }
 
-pub fn with_os_header(req: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
-    req.header("X-Operating-System", os_header())
-}
+/*
+    .route("/v1/launcher/files/:cdn/:version", get(launcher_files)) // LAUNCHER AUTOUPDATE TODO
+    .route("/v1/stats/:channel", get(stats_metadata)) // NOT USED BY LAUNCHER
+    .route("/v1/route/:channel/:platform/:from/:from_channel", get(upgrade_path))
+     */
 
-pub fn hash_url(url: &str) -> String {
-    let re = regex::Regex::new(r"^(.*)\?(.)$").unwrap();
-    if url.contains("?") {
-        let caps = re.captures_iter(url).next().unwrap();
-        format!("{}/hash?{}", &caps[0], &caps[1])
-    } else {
-        format!("{}/hash", url)
-    }
-}
-
-pub fn get_config(send: Sender<Result<LauncherConfiguration, anyhow::Error>>) {
+pub fn get_config(send: Sender<Result<LauncherConfig, anyhow::Error>>) {
     thread::spawn(move || {
-        let res = blocking::get(format!("{}/launcher/config", crate::defs::URL));
-        let res = res.and_then(|x| x.json::<LauncherConfiguration>());
+        let res = blocking::get(format!("{}/v1/launcher/config", crate::defs::URL));
+        let res = res.and_then(|x| x.json::<LauncherConfig>());
         send.send(res.map_err(|x|x.into())).unwrap();
     });
 }
 
-pub fn get_args(dev_enabled: bool) -> Result<String, anyhow::Error> {
-    let args = reqwest::blocking::get(format!("{}/launcher/args?dev={}", crate::defs::URL, dev_enabled))?;
-    Ok(args.text()?)
+pub fn get_data(channel: String, send: Sender<Result<ConfigResponse, anyhow::Error>>) {
+    thread::spawn(move || {
+        let res = blocking::get(format!("{}/v1/launcher/config/{channel}/{}", crate::defs::URL, platform()));
+        println!("Data: {:?}", res);
+        let res = res.and_then(|x| x.json::<ConfigResponse>());
+        send.send(res.map_err(|x|x.into())).unwrap();
+    });
 }
 
-pub fn get_update_path(current: &crate::json::InstallManifest, dev_enabled: bool) -> Result<PatchList, anyhow::Error> {
-    let client = reqwest::blocking::ClientBuilder::new().build()?;
-    let data = with_os_header(client.get(format!("{}/game/update?version={}&dev={}", crate::defs::URL, crate::defs::version_str(&current.version), dev_enabled)))
-        .send()?.text()?;
-    let path = serde_json::from_str::<PatchList>(&data)?;
-    Ok(path)
+pub fn get_latest_build(channel: &str) -> Result<String, anyhow::Error> {
+    Ok(blocking::get(format!("{}/v1/latest/{channel}/{}", crate::defs::URL, platform()))?.text()?)
 }
 
-pub fn get_current(dev_enabled: bool) -> Result<GameVersion, anyhow::Error> {
-    let client = reqwest::blocking::ClientBuilder::new().build()?;
-    let data = with_os_header(client.get(format!("{}/game/current?dev={}", crate::defs::URL, dev_enabled)))
-        .send()?.text()?;
-    let version = serde_json::from_str::<GameVersion>(&data)?;
-    Ok(version)
+pub fn get_stat_url(cdn: &str, channel: &str) -> Result<String, anyhow::Error> {
+    Ok(blocking::get(format!("{}/v1/paths/stats/{cdn}/{channel}", crate::defs::URL))?.text()?)
 }
 
+pub fn get_release_url(cdn: &str, channel: &str, name: &str) -> Result<String, anyhow::Error> {
+    Ok(blocking::get(format!("{}/v1/paths/release/{cdn}/{channel}/{}/{name}", crate::defs::URL, platform()))?.text()?)
+}
+
+pub fn get_patch_url(cdn: &str, channel: &str, name: &str) -> Result<String, anyhow::Error> {
+    Ok(blocking::get(format!("{}/v1/paths/release/{cdn}/{channel}/{}/{name}", crate::defs::URL, platform()))?.text()?)
+}
+
+pub fn get_update_path(from_channel: &str, to_channel: &str, from_release: &str) -> Result<UpgradePath, anyhow::Error> {
+    let res = blocking::get(format!("{}/v1/route/{to_channel}/{}/{from_release}/{from_channel}", crate::defs::URL, platform()));
+    Ok(res.and_then(|x| x.json::<UpgradePath>())?)
+}
+
+pub fn download_file(url: &str, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>)  -> Result<LoadedFileSource, anyhow::Error>{
+    
+    todo!();
+}
+
+/* 
 pub fn get_file(url: &str, hash_url: Option<String>, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>) -> Result<LoadedFileSource, anyhow::Error>{
     let client = reqwest::blocking::ClientBuilder::new().build()?;
     let data = with_os_header(client.get(url)).send()?;
@@ -102,26 +109,4 @@ pub fn get_file(url: &str, hash_url: Option<String>, status: Option<std::sync::A
     }
     Ok(LoadedFileSource::new(save))
 }
-
-fn redownload_internal() -> Result<(), anyhow::Error> {
-    let url = format!("{}/launcher/build", crate::defs::URL);
-    let mut data = Vec::new();
-    get_file(&url, Some(hash_url(&url)), None)?.as_reader().read_to_end(&mut data)?;
-
-    let curr_name = std::env::current_exe()?;
-    let mut new_name = curr_name.clone();
-    new_name.pop();
-    let mut nn = curr_name.components().last().unwrap().as_os_str().to_os_string();
-    nn.push(".tmp");
-    new_name.push(nn);
-
-    std::fs::rename(&curr_name, new_name)?;
-    std::fs::write(curr_name, data)?;
-    Ok(())
-}
-
-pub fn redownload(send: Sender<Result<(), anyhow::Error>>) {
-    thread::spawn(move || {//"ProcelioLauncher.exe"
-        send.send(redownload_internal()).unwrap();
-    });
-}
+*/

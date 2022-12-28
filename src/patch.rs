@@ -4,6 +4,14 @@ use std::boxed::Box;
 use crate::json::InstallManifest;
 use std::io::Seek;
 
+#[derive(Clone)]
+pub struct PlayGameConfig {
+    pub cdn: String,
+    pub channel: String,
+    pub latest_build: String,
+    pub args: Vec<String>,
+}
+
 pub fn delete_old_launcher() -> Result<(), anyhow::Error> {
     let curr_name = std::env::current_exe()?;
     let mut new_name = curr_name.clone();
@@ -66,11 +74,10 @@ fn unzip_to<T: Seek + BufRead>(dir: std::path::PathBuf, reader: T, cb: Option<&d
     Ok(())
 }
 
-fn download_fresh(dir: &std::path::PathBuf, dev: bool, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<InstallManifest>, anyhow::Error> {
-    let version = crate::net::get_current(dev)?;
-    println!("DONWLOADING FRESH");
-    let fresh_url = format!("{}/game/build/{}", crate::defs::URL, version.to_string());
-    let file = crate::net::get_file(&fresh_url, Some(crate::net::hash_url(&fresh_url)), Some(process.clone()))?;
+fn download_fresh(config: PlayGameConfig, dir: &std::path::PathBuf, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<InstallManifest>, anyhow::Error> {
+    let path = crate::net::get_release_url(&config.cdn, &config.channel, &config.latest_build)?;
+    let file = crate::net::download_file(&path, Some(process.clone()))?;
+
     println!("File downloaded");
     unzip_to(dir.to_owned(), file.as_reader(), Some(&|a, b| {
         let mut lock = process.lock().unwrap();
@@ -85,75 +92,84 @@ fn patch_to<T: Seek + BufRead>(dir: std::path::PathBuf, reader: T, cb: Option<&d
     proceliotool::tools::patch::from_zip(dir.to_owned(),&mut zip, cb)
 }
 
-fn apply_patch(dir: &std::path::PathBuf, patch: String, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<InstallManifest>, anyhow::Error> {
-    let fresh_url = format!("{}/game/patch/{}", crate::defs::URL, patch);
-    let file = crate::net::get_file(&fresh_url, Some(crate::net::hash_url(&fresh_url)), Some(process.clone()))?;
-    patch_to(dir.to_owned(), file.as_reader(), Some(&|a, b| {
+fn apply_patch(config: PlayGameConfig, dir: &std::path::PathBuf, patch: String, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<InstallManifest>, anyhow::Error> {
+    let path = crate::net::get_patch_url(&config.cdn, &config.channel, &patch)?;
+    let file = crate::net::download_file(&path, Some(process.clone()))?;
+
+    let dd = patch_to(dir.to_owned(), file.as_reader(), Some(&|a, b| {
         let mut lock = process.lock().unwrap();
         lock.0 = a;
         lock.1 = format!("Patch {}: {}", patch, b);
-    }))?;
-
+    }));
+    println!("{:?}", dd);
+    let _ = dd?;
     Ok(get_installed_version(dir)?)
 }
 
-fn launch_game(manifest: Option<InstallManifest>, dir: std::path::PathBuf) -> Result<Option<std::process::Child>, anyhow::Error> {
+fn launch_game(config: PlayGameConfig, manifest: Option<InstallManifest>, dir: std::path::PathBuf, version_send: std::sync::mpsc::Sender<Result<InstallManifest, anyhow::Error>>) -> Result<Option<std::process::Child>, anyhow::Error> {
     let manifest = match manifest {
         Some(s) => s,
         None => { return Err(anyhow::Error::msg("Unable to load launch manifest")); }
     };
-    let args = crate::net::get_args(manifest.dev)?;
     println!("Launch Game");
-
-    let arg = shell_words::split(&args)?;
+    version_send.send(Ok(manifest.clone()))?;
     thread::spawn(move || {
         std::process::Command::new(dir.join(manifest.exec))
-        .args(arg)
+        .args(config.args)
         .output().unwrap();
     });
     Ok(None)
 }
 
 
-pub fn play_clicked_internal(dir: std::path::PathBuf, use_dev: bool, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<std::process::Child>, anyhow::Error> {
+pub fn play_clicked_internal(
+    dir: std::path::PathBuf,
+    config: PlayGameConfig,
+    process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>,
+    version_send: std::sync::mpsc::Sender<Result<InstallManifest, anyhow::Error>>) -> Result<Option<std::process::Child>, anyhow::Error> {
     proceliotool::tools::patch::check_rollback(&dir)?;
-    let mut installed_version = match get_installed_version(&dir)? {
+
+    let installed_version = match get_installed_version(&dir)? {
         Some(s) => s,
         None => {
-           return launch_game(download_fresh(&dir, use_dev, process)?, dir);
+           return launch_game(config.clone(), download_fresh(config.clone(), &dir, process)?, dir, version_send);
         }
     };
 
-    let path = crate::net::get_update_path(&installed_version, use_dev)?;
-    if path.most_recent == installed_version {
-        return launch_game(Some(installed_version), dir);
-    }
+    let path = crate::net::get_update_path(&installed_version.channel, &config.channel, &installed_version.version)?;
 
-    if path.patches.is_empty() {
-        uninstall_internal(&dir, process.clone())?;
-        return launch_game(download_fresh(&dir, use_dev, process)?, dir);
-    }
+    let manifest = match path {
+        crate::json::UpgradePath::NoChangesRequired => Some(installed_version),
+        crate::json::UpgradePath::FreshDownload(d) => {
+            uninstall_internal(&dir, process.clone())?;
+            println!("{:?}", &d);
+            download_fresh(config.clone(), &dir, process)?
+        },
+        crate::json::UpgradePath::PatchRoute(pr) => {
+            let mut m = None;
+            for p in pr {
+                m = apply_patch(config.clone(), &dir, p.name, process.clone())?;
+            }
+            m
+        },
+    };
 
-    for patch in &path.patches {
-        if let Some(s) = apply_patch(&dir, patch.to_owned(), process.clone())? {
-            installed_version = s;
-        }
-    }
-    launch_game(Some(installed_version), dir)
+    launch_game(config, manifest, dir, version_send)
 }
+
 
 pub fn play_clicked(
     dir: std::path::PathBuf,
-    use_dev: bool, 
+    config: PlayGameConfig,
     process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>,
-    send: std::sync::mpsc::Sender<Result<(), anyhow::Error>>
+    send: std::sync::mpsc::Sender<Result<(), anyhow::Error>>,
+    version_send: std::sync::mpsc::Sender<Result<InstallManifest, anyhow::Error>>
 ) {
     thread::spawn(move || {
-        let res = play_clicked_internal(dir, use_dev, process.clone());
+        let res = play_clicked_internal(dir, config, process.clone(), version_send);
         match res {
             Err(e) => {
-                process.lock().unwrap().2 = Some(Box::new(e));
-                send.send(Ok(())).unwrap();
+                send.send(Err(e)).unwrap();
             }
             Ok(c) => {
                 if let Some(mut z) = c {
@@ -168,10 +184,16 @@ pub fn play_clicked(
 
 
 fn uninstall_internal(dir: &std::path::PathBuf, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<(), anyhow::Error> {
+    if !dir.ends_with("Procelio") {
+        let msg = format!("Cannot guarantee path '{:?}' only contains Procelio files. Please delete manually.", dir.display());
+        return Err(anyhow::anyhow!(msg));
+    }
+
     let version = get_installed_version(&dir)?;
     if let None = version {
         return Ok(());
     }
+
     let num = std::fs::read_dir(dir)?.count();
     let mut i = 0;
     for file in std::fs::read_dir(dir)? {
@@ -181,9 +203,8 @@ fn uninstall_internal(dir: &std::path::PathBuf, process: std::sync::Arc<std::syn
         lock.1 = format!("Removing {}", f.path().display());
         i += 1;
         drop(lock);
-       
         if f.path().is_dir() {
-            std::fs::remove_dir(f.path())?;
+            std::fs::remove_dir_all(f.path())?;
         }
         else if f.path().is_file() {
             std::fs::remove_file(f.path())?;
@@ -193,10 +214,14 @@ fn uninstall_internal(dir: &std::path::PathBuf, process: std::sync::Arc<std::syn
 }
 
 pub fn uninstall(dir: std::path::PathBuf, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>, send: std::sync::mpsc::Sender<Result<(), anyhow::Error>>) {
+    println!("Invoke uninstall");
     thread::spawn(move || {
         if let Err(e) = uninstall_internal(&dir, process.clone()) {
+            send.send(Err(anyhow::anyhow!(format!("Uninstallation failed: {:?}", &e)))).unwrap();
             process.lock().unwrap().2 = Some(Box::new(e));
+            return;
         }
+        println!("Uninstall ok");
         send.send(Ok(())).unwrap();
     });
 }
