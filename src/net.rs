@@ -1,11 +1,10 @@
 use reqwest::blocking;
-use crate::json::{GameVersion, PatchList, LauncherConfig, ConfigResponse, UpgradePath};
+use crate::json::{LauncherConfig, ConfigResponse, UpgradePath};
 use std::sync::mpsc::Sender;
 use std::thread;
-use crate::files::{LoadingFileSource, LoadedFileSource};
+use crate::files::LoadedFileSource;
 use std::boxed::Box;
 use std::io::Read;
-use sha2::{Sha512, Digest};
 
 fn platform() -> &'static str {
     #[cfg(windows)]
@@ -38,6 +37,17 @@ pub fn get_data(channel: String, send: Sender<Result<ConfigResponse, anyhow::Err
     });
 }
 
+pub fn get_image(curr: String, image: String, send: Sender<Result<Vec<u8>, anyhow::Error>>) {
+    thread::spawn(move || {
+        let data = load_image(curr, image);
+        let data = match data {
+            Some(s) => Ok(s),
+            None => Err(anyhow::anyhow!("missing image"))
+        };
+        send.send(data).unwrap();
+    });
+}
+
 pub fn get_latest_build(channel: &str) -> Result<String, anyhow::Error> {
     Ok(blocking::get(format!("{}/v1/latest/{channel}/{}", crate::defs::URL, platform()))?.text()?)
 }
@@ -54,59 +64,60 @@ pub fn get_patch_url(cdn: &str, channel: &str, name: &str) -> Result<String, any
     Ok(blocking::get(format!("{}/v1/paths/release/{cdn}/{channel}/{}/{name}", crate::defs::URL, platform()))?.text()?)
 }
 
+pub fn get_image_url(cdn: &str, image: &str) -> Result<String, anyhow::Error> {
+    Ok(blocking::get(format!("{}/v1/paths/image/{cdn}/{image}", crate::defs::URL))?.text()?)
+}
+
 pub fn get_update_path(from_channel: &str, to_channel: &str, from_release: &str) -> Result<UpgradePath, anyhow::Error> {
     let res = blocking::get(format!("{}/v1/route/{to_channel}/{}/{from_release}/{from_channel}", crate::defs::URL, platform()));
     Ok(res.and_then(|x| x.json::<UpgradePath>())?)
 }
 
+pub fn get_launcher_url(cdn: &str, name: &str) -> Result<String, anyhow::Error> {
+    Ok(blocking::get(format!("{}/v1/paths/launcher/{cdn}/{name}", crate::defs::URL))?.text()?)
+}
+
 pub fn download_file(url: &str, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>)  -> Result<LoadedFileSource, anyhow::Error>{
-    
-    todo!();
+    println!("DOWNLOADING {:?}", url);
+    let data = std::fs::read(url.replace("/", "\\"  ));
+
+    Ok(LoadedFileSource::InMemory(data?))
 }
 
-/* 
-pub fn get_file(url: &str, hash_url: Option<String>, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>) -> Result<LoadedFileSource, anyhow::Error>{
-    let client = reqwest::blocking::ClientBuilder::new().build()?;
-    let data = with_os_header(client.get(url)).send()?;
+pub fn load_image(curr_name: String, image_name: String) -> Option<Vec<u8>> {
+    let mut path = match platform_dirs::AppDirs::new(Some("Procelio Launcher"), true) {
+        None => { return None; }
+        Some(s) => s.config_dir
+    };
 
-    let len = data.content_length();
-    let mut reader = std::io::BufReader::with_capacity(64000, data);
-    
-    if let Some(s) = &status {
-        let mut lock = s.lock().unwrap();
-        println!("downloading {}", &url);
-        lock.1 = format!("Downloading {}", &url);
+    path.push("bg.png");
+
+    let data = std::fs::read(&path).ok();
+    if data.is_some() && curr_name == image_name {
+        return Some(data.unwrap());
     }
 
-    println!("FILE OF SIZE {:?}", len);
-    let mut save = LoadingFileSource::new(len)?;
-    let mut buf = [0u8; 4096];
-    let mut n = 0;
+    let url = match get_image_url("nyc3", &image_name) {
+        Ok(a) => a,
+        Err(_) => { return None; }
+    };
 
-    let mut hasher = Sha512::new();
-    loop {
-        let k = reader.read(&mut buf)?;
-        if k == 0 {
-            break;
+    let src = match download_file(&url, None) {
+        Ok(s) => s,
+        Err(_) => { return None; }
+    };
+
+    let bytes = match src {
+        LoadedFileSource::InMemory(v) => v,
+        LoadedFileSource::OnDisk(mut f) => {
+            let mut b = Vec::new();
+            if let Err(_) = f.read_to_end(&mut b) {
+                return None;
+            }
+            b
         }
+    };
 
-        hasher.update(&buf[0..k]);
-        save.add(&buf[0..k])?;
-
-        n += k;
-        if let Some(s) = &status {
-            let mut lock = s.lock().unwrap();
-            lock.0 = (n as f32) / (len.unwrap_or(n as u64) as f32);
-        }
-    }
-
-    if let Some(path) = hash_url {
-        let hash = with_os_header(client.get(&path)).send()?.text()?;
-        let chash =  hex::encode(hasher.finalize());
-        if chash.to_ascii_uppercase() != hash.to_ascii_uppercase() {
-            return Err(anyhow::Error::msg(format!("Hashes for {} did not match", &url)));
-        }
-    }
-    Ok(LoadedFileSource::new(save))
+    let _ = std::fs::write(path, bytes.as_slice());
+    Some(bytes)
 }
-*/
