@@ -78,6 +78,14 @@ pub fn get_launcher_url(cdn: &str, name: &str) -> Result<String, anyhow::Error> 
 }
 
 pub fn download_file(url: &str, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>)  -> Result<LoadedFileSource, anyhow::Error>{
+    if let Some(s) = status {
+        for i in 0..=100 {
+            let q = (i as f32 / 100.0, format!("{i}/100"), None);
+            *s.lock().unwrap() = q;
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+    
     println!("DOWNLOADING {:?}", url);
     let data = std::fs::read(url.replace("/", "\\"  ));
 
