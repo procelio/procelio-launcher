@@ -94,6 +94,7 @@ fn patch_to<T: Seek + BufRead>(dir: std::path::PathBuf, reader: T, cb: Option<&d
 
 fn apply_patch(config: PlayGameConfig, dir: &std::path::PathBuf, patch: String, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<InstallManifest>, anyhow::Error> {
     let path = crate::net::get_patch_url(&config.cdn, &config.channel, &patch)?;
+    println!("Download patch {:?}", &path);
     let file = crate::net::download_file(&path, Some(process.clone()))?;
 
     let dd = patch_to(dir.to_owned(), file.as_reader(), Some(&|a, b| {

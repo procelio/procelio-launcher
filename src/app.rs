@@ -803,7 +803,7 @@ impl epi::App for ProcelioLauncher {
                         }
                     });
 
-                egui::ComboBox::from_label("CDN")
+                egui::ComboBox::from_label("Download Region")
                     .selected_text(format!("{}", &self.cdn))
                     .show_ui(ui, |ui| {
                         if let LoadStatus::Loaded(s) = &self.states.config {

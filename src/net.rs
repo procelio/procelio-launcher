@@ -61,7 +61,7 @@ pub fn get_release_url(cdn: &str, channel: &str, name: &str) -> Result<String, a
 }
 
 pub fn get_patch_url(cdn: &str, channel: &str, name: &str) -> Result<String, anyhow::Error> {
-    Ok(blocking::get(format!("{}/v1/paths/release/{cdn}/{channel}/{}/{name}", crate::defs::URL, platform()))?.text()?)
+    Ok(blocking::get(format!("{}/v1/paths/patch/{cdn}/{channel}/{}/{name}", crate::defs::URL, platform()))?.text()?)
 }
 
 pub fn get_image_url(cdn: &str, image: &str) -> Result<String, anyhow::Error> {
@@ -78,15 +78,16 @@ pub fn get_launcher_url(cdn: &str, name: &str) -> Result<String, anyhow::Error> 
 }
 
 pub fn download_file(url: &str, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>)  -> Result<LoadedFileSource, anyhow::Error>{
+    println!("Downloading {:?}", url);
+
     if let Some(s) = status {
         for i in 0..=100 {
-            let q = (i as f32 / 100.0, format!("{i}/100"), None);
+            let q = (i as f32 / 100.0, format!("'downloading' file {i}/100: {url}"), None);
             *s.lock().unwrap() = q;
-            std::thread::sleep(std::time::Duration::from_millis(250));
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }
     
-    println!("DOWNLOADING {:?}", url);
     let data = std::fs::read(url.replace("/", "\\"  ));
 
     Ok(LoadedFileSource::InMemory(data?))
