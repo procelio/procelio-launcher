@@ -1,6 +1,12 @@
+use std::sync::mpsc::Sender;
+use std::thread;
+
+use eframe::egui::style::Margin;
+use eframe::epaint::TextureHandle;
 use eframe::{egui, epi};
 use crate::json::*;
 use crate::defs;
+use crate::patch::PlayGameConfig;
 use open;
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -8,7 +14,13 @@ use open;
 pub struct ProcelioLauncher {
     readme_accepted: i32,
     install_dir: Option<std::path::PathBuf>,
-    use_dev_builds: bool,
+    #[serde(default)]
+    channel: String,
+    #[serde(default)]
+    cdn: String,
+    #[serde(default)]
+    image: String,
+
     #[serde(skip)]
     refs: ResourceRefs,
     #[serde(skip)]
@@ -24,11 +36,13 @@ pub struct ProcelioLauncher {
 }
 
 pub struct Ephemeral {
-    config: LoadStatus<LauncherConfiguration>,
+    config: LoadStatus<LauncherConfig>,
+    channel: LoadStatus<ConfigResponse>,
+    image: LoadStatus<Vec<u8>>,
     launcher_redownload: LoadStatus<()>,
     launching: LoadStatus<()>,
     uninstall: LoadStatus<()>,
-
+    new_version: LoadStatus<InstallManifest>,
     error: Option<Box<anyhow::Error>>,
     processing_status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>
 }
@@ -37,9 +51,12 @@ impl Ephemeral {
     pub fn new() -> Ephemeral {
         Ephemeral { 
             config: LoadStatus::AppLoad, 
+            channel: LoadStatus::AppLoad,
+            image: LoadStatus::AppLoad,
             launcher_redownload: LoadStatus::AppLoad,
             uninstall: LoadStatus::AppLoad,
             launching: LoadStatus::AppLoad,
+            new_version: LoadStatus::AppLoad,
             error: None, 
             processing_status: None }
     }
@@ -49,26 +66,42 @@ impl Ephemeral {
             LoadStatus::AppLoad => true,
             _ => false
         };
+
+        let channel = match self.channel {
+            LoadStatus::Loaded(_) => true,
+            _ => false
+        };
         let game = self.processing_status.is_none();
-        launcher && game
+        launcher && game && channel
     }
 }
 
 pub struct ResourceRefs {
     pub procelio_logo: Option<egui::TextureHandle>,
+    pub gear_logo: Option<egui::TextureHandle>,
+    pub website_logo: Option<egui::TextureHandle>,
     pub discord_logo: Option<egui::TextureHandle>,
     pub twitter_logo: Option<egui::TextureHandle>,
     pub youtube_logo: Option<egui::TextureHandle>,
+    pub baseplate_tex: Option<egui::TextureHandle>,
+    pub trim_tex: Option<egui::TextureHandle>,
+    pub play_tex: Option<egui::TextureHandle>,
+
     pub background: Option<egui::TextureHandle>
 }
 
 impl ResourceRefs {
     pub fn new() -> Self {
         ResourceRefs {
+            gear_logo: None,
+            website_logo: None,
             procelio_logo: None,
             discord_logo: None,
             twitter_logo: None,
             youtube_logo: None,
+            baseplate_tex: None,
+            trim_tex: None,
+            play_tex: None,
             background: None,
         }
     }
@@ -90,6 +123,18 @@ impl ResourceRefs {
         })
     }
 
+    pub fn get_website_logo(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
+        self.website_logo.get_or_insert_with(|| {
+            ui.ctx().load_texture("website-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/procelio_small.png")).unwrap())
+        })
+    }
+
+    pub fn get_settigns_gear(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
+        self.gear_logo.get_or_insert_with(|| {
+            ui.ctx().load_texture("gear-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/gear_logo_small.png")).unwrap())
+        })
+    }
+
     pub fn get_discord_logo(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
         self.discord_logo.get_or_insert_with(|| {
             ui.ctx().load_texture("discord-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/discord_logo_small.png")).unwrap())
@@ -108,9 +153,28 @@ impl ResourceRefs {
         })
     }
 
-    pub fn get_background(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
+    pub fn get_baseplate_tex(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
+        self.baseplate_tex.get_or_insert_with(|| {
+            ctx.load_texture("baseplate", ResourceRefs::load_image_bytes(include_bytes!("resources/baseplate.png")).unwrap())
+        })
+    }
+
+    pub fn get_trim_tex(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
+        self.trim_tex.get_or_insert_with(|| {
+            ctx.load_texture("trim", ResourceRefs::load_image_bytes(include_bytes!("resources/trim.png")).unwrap())
+        })
+    }
+
+    pub fn get_play_tex(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
+        self.play_tex.get_or_insert_with(|| {
+            ctx.load_texture("play", ResourceRefs::load_image_bytes(include_bytes!("resources/play.png")).unwrap())
+        })
+    }
+
+    pub fn get_background(&mut self, img: Option<&Vec<u8>>, ctx: &egui::Context) -> &egui::TextureHandle {
         self.background.get_or_insert_with(|| {
-            ctx.load_texture("background", ResourceRefs::load_image_bytes(include_bytes!("resources/background.png")).unwrap())
+            let bytes = img.as_ref().map(|&x| x.as_slice()).unwrap_or(include_bytes!("resources/background.png"));
+            ctx.load_texture("background", ResourceRefs::load_image_bytes(bytes).unwrap())
         })
     }
 }
@@ -121,7 +185,9 @@ impl Default for ProcelioLauncher {
             launcher_name: format!("Procelio Launcher"),
             readme_accepted: 0,
             install_dir: None,
-            use_dev_builds: false,
+            image: "none".to_owned(),
+            channel: "prod".to_owned(),
+            cdn: "nyc3".to_owned(),
             settings: false,
             licenses: false,
             viewed_changelog: 0,
@@ -132,6 +198,43 @@ impl Default for ProcelioLauncher {
 }
 
 impl ProcelioLauncher {
+    fn redownload_internal(cdn: String) -> Result<(), anyhow::Error> {
+        let url = crate::net::get_launcher_url(&cdn, defs::launcher_name())?;
+        let file = crate::net::download_file(None, &url, None)?;
+        let mut data = Vec::new();
+        file.as_reader().read_to_end(&mut data)?;
+    
+        let curr_name = std::env::current_exe()?;
+        let mut new_name = curr_name.clone();
+        new_name.pop();
+        let mut nn = curr_name.components().last().unwrap().as_os_str().to_os_string();
+        nn.push(".tmp");
+        new_name.push(nn);
+    
+        std::fs::rename(&curr_name, new_name)?;
+        std::fs::write(curr_name, data)?;
+        Ok(())
+    }
+
+    pub fn redownload_launcher(cdn: String, send: Sender<Result<(), anyhow::Error>>) {
+        thread::spawn(move || {//"ProcelioLauncher.exe"
+            send.send(ProcelioLauncher::redownload_internal(cdn)).unwrap();
+        });
+    }
+
+    fn gather_args(&self) -> Option<PlayGameConfig> {
+        if let LoadStatus::Loaded(t) = &self.states.channel {
+            Some(PlayGameConfig {
+                cdn: self.cdn.clone(),
+                channel: self.channel.clone(),
+                latest_build: t.newest_release_name.clone(),
+                args: t.args.clone()
+            })
+        } else {
+            None
+        }
+    }
+
     fn uvize(rect: egui::Rect, width: f32, height: f32) -> egui::Rect {
         egui::Rect::from_two_pos(
             egui::pos2(rect.min.x / width, rect.min.y / height),
@@ -144,10 +247,29 @@ impl ProcelioLauncher {
             if let Ok(a) = recv.try_recv() {
                 match a {
                     Ok(cfg) => {
-                        if cfg.launcher_version != defs::version() {
+                        if !cfg.channels.contains(&self.channel) {
+                            self.channel = "prod".to_owned();
+                        }
+                        if !cfg.cdn_regions.contains(&self.cdn) {
+                            self.cdn = "nyc3".to_owned();
+                        }
+                        if cfg.metadata.version != defs::version() {
                             self.states.launcher_redownload = LoadStatus::AwaitingApproval;
                         }
+                        
+                        if self.image != cfg.metadata.bg_image {
+                            let (ss, rr) = std::sync::mpsc::channel();
+                            self.states.image = LoadStatus::Pending(rr);
+                            crate::net::get_image(self.image.clone(), cfg.metadata.bg_image.clone(), ss);
+                            self.image = cfg.metadata.bg_image.clone();
+                        }
+
                         self.states.config = LoadStatus::Loaded(cfg);
+
+                        let (s, r) = std::sync::mpsc::channel();
+                        self.states.channel = LoadStatus::Pending(r);
+                        ctx.request_repaint();
+                        crate::net::get_data(self.channel.clone(), s);
                     },
                     Err(e) => {
                         self.states.error = Some(std::boxed::Box::new(e.into()))
@@ -159,11 +281,11 @@ impl ProcelioLauncher {
         if let LoadStatus::AwaitingApproval = &mut self.states.launcher_redownload {
             egui::Window::new("Approve Launcher Update?").show(ctx, |ui| {
                 if let LoadStatus::Loaded(x) = &self.states.config {
-                    ui.label(format!("The launcher will download and update to version {}", &defs::version_str(&x.launcher_version)));
+                    ui.label(format!("The launcher will download and update to version {}", x.metadata.version));
                     if ui.button("OK").clicked() {
                         let (s, r) = std::sync::mpsc::channel();
                         self.states.launcher_redownload = LoadStatus::Pending(r);
-                        crate::net::redownload(s);
+                        ProcelioLauncher::redownload_launcher(self.cdn.clone(), s);
                     }
                     if ui.button("Quit").clicked() {
                         frame.quit();
@@ -174,6 +296,32 @@ impl ProcelioLauncher {
             return true;
         }
 
+        if let LoadStatus::Pending(recv) = &mut self.states.channel {
+            ctx.request_repaint();
+            if let Ok(a) = recv.try_recv() {
+                match a {
+                    Ok(x) => {
+                        self.states.channel = LoadStatus::Loaded(x);
+                    },
+                    Err(e) => {
+                        self.states.error = Some(std::boxed::Box::new(e.into()))
+                    }
+                }
+            }
+        }
+
+        if let LoadStatus::Pending(recv) = &mut self.states.image {
+            if let Ok(a) = recv.try_recv() {
+                match a {
+                    Ok(x) => {
+                        self.states.image = LoadStatus::Loaded(x);
+                        self.refs.background = None;
+                    },
+                    Err(_) => { }
+                }
+            }
+        }
+        
         if let LoadStatus::Pending(recv) = &mut self.states.launcher_redownload {
             if let Ok(a) = recv.try_recv() {
                 match a {
@@ -205,17 +353,27 @@ impl ProcelioLauncher {
                 if self.states.ok_to_play() {
                     egui::Window::new("Confirm Procelio Uninstall?").show(ctx, |ui| {
                         ui.label(format!("The game will be uninstalled at {:?}", path.display()));
-                        if ui.button("OK").clicked() {
-                            let mutex = std::sync::Arc::new(std::sync::Mutex::new((0., "Uninstalling".to_owned(), None)));
-                            self.states.processing_status = Some(mutex.clone());
+                        ui.label("");
 
-                            let (send, recv) = std::sync::mpsc::channel();
-                            self.states.uninstall = LoadStatus::Pending(recv);
-                            crate::patch::uninstall(path.to_owned(), mutex, send);
-                        }
-                        if ui.button("Cancel").clicked() {
-                            self.states.uninstall = LoadStatus::AppLoad;
-                        }
+                        ui.columns(4, |ui| {
+                          //  ui[0].with_layout(egui::Layout::left_to_right(), |ui| {
+                                if ui[0].button(egui::RichText::new("Uninstall").color(egui::Color32::RED)).clicked() {
+                                    let mutex = std::sync::Arc::new(std::sync::Mutex::new((0., "Uninstalling".to_owned(), None)));
+                                    self.states.processing_status = Some(mutex.clone());
+        
+                                    let (send, recv) = std::sync::mpsc::channel();
+                                    self.states.uninstall = LoadStatus::Pending(recv);
+                                    crate::patch::uninstall(path.to_owned(), mutex, send);
+                                }
+                          //  });
+
+                            if ui[3].button("Cancel").clicked() {
+                                self.states.uninstall = LoadStatus::AppLoad;
+                            }
+                           // ui[1].with_layout(egui::Layout::right_to_left(), |ui| {
+
+                           // });
+                        })                        
                     });
                     return true;
                 }
@@ -263,7 +421,100 @@ impl ProcelioLauncher {
             return true;
         }
 
+        if let LoadStatus::Pending(recv) = &mut self.states.new_version {
+            if let Ok(a) = recv.try_recv() {
+                match a {
+                    Ok(_) => { },
+                    Err(e) => {
+                        self.states.error = Some(std::boxed::Box::new(e.into()))
+                    }
+                };
+            }
+        }
         false
+    }
+
+    fn image(&mut self, ui: &mut egui::Ui, fill: egui::Color32, name: &str, url: &str, image: &dyn for<'a, 'b> Fn(&'a mut Self, &'b mut egui::Ui) -> &'a TextureHandle) -> bool {
+        let resp = egui::containers::Frame {
+            margin: egui::style::Margin { left: 5., right: 5., top: 5., bottom: 5. },
+            rounding: egui::Rounding { nw: 0.0, ne: 0.0, sw: 0.0, se: 0.0 },
+            shadow: eframe::epaint::Shadow::default(),
+            fill,
+            stroke: egui::Stroke::default()
+        }.show(ui, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(egui::Vec2::new(100., 25.), egui::Sense::click());
+            ui.allocate_ui_at_rect(rect, |ui| {
+                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::Center), |ui| {
+                    let image = image(self, ui);
+                    let size = image.size_vec2() / 1.5;
+                    if ui.add(egui::widgets::ImageButton::new(image, size)).clicked() {
+                        if let Err(e) = open::that(url) {
+                            self.states.error = Some(Box::new(anyhow::Error::new(e)));
+                        }
+                    }
+                    ui.label(name);
+                });
+            });
+            if resp.clicked() {
+                if url != "" {
+                    if let Err(e) = open::that(url) {
+                        self.states.error = Some(Box::new(anyhow::Error::new(e)));
+                    }
+                }
+                return true;
+            }
+            false
+        });
+        resp.inner
+    }
+
+    fn changelog(refs: &mut ResourceRefs, ctx: &egui::Context, ui: &mut egui::Ui, fill: egui::Color32, name: &str, description: &str, url: &str) {
+        const WIDTH: f32 = 200.;
+        let text_color = egui::Color32::from_rgb(180, 180, 180);
+        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 300.), egui::Sense::focusable_noninteractive());
+
+        ui.allocate_ui_at_rect(rect, |ui| {
+            ui.style_mut().spacing.item_spacing = egui::vec2(0., 0.);
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 16.), egui::Sense::click());
+                ui.allocate_ui_at_rect(rect, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgb(32, 32, 32))
+                        .margin(Margin::same(5.))
+                        .show(ui, |ui| {
+                            ui.add_sized([WIDTH - 10., 36.], egui::Label::new(egui::RichText::new(name).color(text_color).size(18.)));
+                        });
+                });
+                let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 172.), egui::Sense::click());
+                ui.allocate_ui_at_rect(rect, |ui| {
+                    egui::Frame::none()
+                        .fill(fill)
+                        .margin(Margin::same(5.))
+                        .show(ui, |ui| {
+                            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                                ui.add(egui::Label::new(egui::RichText::new(description).size(12.)));
+                                ui.allocate_space(ui.available_size());
+                            });
+                        });
+                });
+
+                let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 16.), egui::Sense::click());
+                ui.allocate_ui_at_rect(rect, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgb(32, 32, 32))
+                        .margin(Margin::same(5.))
+                        .show(ui, |ui| {
+                            let txt = egui::RichText::new("FULL PATCH NOTES").color(text_color).size(16.);
+                            if ui.add(egui::widgets::Button::new(txt)).clicked() {
+                                let _ = open::that(url);
+                            }
+                        });
+                });
+
+                let trim = refs.get_trim_tex(ctx);
+                ui.add(egui::Image::new(trim, trim.size_vec2() * 1. / (trim.size_vec2().x / WIDTH)).tint(egui::Color32::from_rgb(32, 32, 32)));
+            });
+        });
     }
 }
 
@@ -274,7 +525,7 @@ impl epi::App for ProcelioLauncher {
     }
 
     /// Called once before the first frame.
-    fn setup(&mut self, _ctx: &egui::Context, _frame: &epi::Frame, _storage: Option<&dyn epi::Storage>) {
+    fn setup(&mut self, ctx: &egui::Context, _frame: &epi::Frame, _storage: Option<&dyn epi::Storage>) {
         if let Some(storage) = _storage {
             *self = epi::get_value(storage, epi::APP_KEY).unwrap_or_default()
         }
@@ -288,6 +539,23 @@ impl epi::App for ProcelioLauncher {
         if let Err(e) = crate::patch::delete_old_launcher() {
             self.states.error = Some(Box::new(e));
         }
+
+        let mut style = (*ctx.style()).clone();
+        style.visuals.extreme_bg_color = egui::Color32::from_rgb(255, 117, 0);
+      //  style.visuals.faint_bg_color = egui::Color32::from_rgb(200, 100, 0);
+        style.visuals.selection.bg_fill = egui::Color32::from_rgb(200, 100, 0);//style.visuals.faint_bg_color;
+        ctx.set_style(style);
+
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert( "Prime".to_owned(), egui::FontData::from_static(include_bytes!("resources/Prime-Regular.otf")));
+        
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "Prime".to_owned());
+
+        ctx.set_fonts(fonts);
     }
 
     /// Called by the frame work to save state before shutdown.
@@ -295,20 +563,31 @@ impl epi::App for ProcelioLauncher {
         epi::set_value(storage, epi::APP_KEY, self);
     }
 
-    
-
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
+        frame.set_window_size(egui::vec2(960.0, 540.0));
         if self.check_states(ctx, frame) {
             return;
         }
 
-        let col = egui::Color32::from_rgba_premultiplied(32, 32, 32, 200);
+        let transparent = egui::Color32::from_rgba_premultiplied(0, 0, 0, 0);
+
+        let col = egui::Color32::from_rgba_premultiplied(8, 8, 8, 225);
         let col2 = egui::Color32::from_rgb(212, 212, 212);
 
-        let nomargin = egui::Frame::default().margin(egui::vec2(1.0, 1.0));
-        let bgtex = self.refs.get_background(ctx);
+        let nomargin = egui::Frame::default().margin(egui::vec2(0.0, 0.0));
+
+        let bgtex = match &self.states.image {
+            LoadStatus::Loaded(x) => {
+                self.refs.get_background(Some(x), ctx)
+            },
+            _ => {
+                let img = crate::net::load_image(self.image.clone(), self.image.clone());
+                self.refs.get_background(img.as_ref(), ctx)
+            }
+        };
+
         let bgwidth = bgtex.size_vec2().x;
         let bgheight = bgtex.size_vec2().y;
         
@@ -323,93 +602,106 @@ impl epi::App for ProcelioLauncher {
             top_height = ui.available_height();
             let rect = egui::Rect::from_two_pos(egui::pos2(0.0, 0.0), egui::pos2(bgwidth, top_height));
             img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
-            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                let tex = self.refs.get_procelio_logo(ui);
-                ui.image(tex, tex.size_vec2());
-                ui.hyperlink_to("Procelio Webpage", "https://www.proceliogame.com");
+
+            egui::containers::Frame {
+                margin: egui::style::Margin { left: 0., right: 0., top: 0., bottom: 0. },
+                rounding: egui::Rounding { nw: 0.0, ne: 0.0, sw: 0.0, se: 0.0 },
+                shadow: eframe::epaint::Shadow::default(),
+                fill: col,
+                stroke: egui::Stroke::default()
+            }.show(ui, |ui| {
+                ui.columns(2, |ui| {
+                    ui[0].with_layout(egui::Layout::left_to_right().with_cross_align(egui::Align::Center), |ui| {
+                        let tex = self.refs.get_procelio_logo(ui);
+                        ui.image(tex, tex.size_vec2() * 0.5);
+                    });
+
+                    egui::Frame::none()
+                        .margin(egui::style::Margin { left: 10., right: 10., top: 10., bottom: 10. })
+                        .show(&mut ui[1], |ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::RIGHT), |ui| {
+                            ui.label(egui::RichText::new("DAILY MESSAGE").size(18.0).strong().color(col2));
+                            if let LoadStatus::Loaded(x) = &self.states.config {
+                                ui.label(egui::RichText::new(&x.metadata.message_of_the_day).size(18.0).strong().color(col2));
+                                ui.label(egui::RichText::new(&x.metadata.motd_author).size(9.0).color(col2));
+                            }
+                        });
+                     });
+                });
             });
         });
 
         egui::TopBottomPanel::bottom("bottom_panel").frame(nomargin).resizable(false).show(ctx, |ui| {
-            bottom_height = ui.available_height();
+            let base_tex = self.refs.get_baseplate_tex(ctx);
+            ui.image(base_tex, base_tex.size_vec2());
+
+            bottom_height = base_tex.size_vec2().y;//ui.available_height();
             let rect = egui::Rect::from_two_pos(egui::pos2(0.0, 540.0 - bottom_height), egui::pos2(960.0, 540.0));
             img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
+            
+            let img = egui::Image::new(base_tex, base_tex.size_vec2());
+            img.tint(col).paint_at(ui, rect);        
+
             ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
+                ui.add_space(24.);
                 ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
-                    let launch = egui::widgets::Button::new(egui::RichText::new(" PLAY ").size(48.).strong().color(egui::Color32::from_rgb(38, 38, 38))).fill(egui::Color32::from_rgb(255, 117, 0));
+                    ui.add_space(32.);
+                    
+                    let tex = self.refs.get_play_tex(ctx);
+                    let size = egui::vec2(171., 64.);
+                    let launch = egui::widgets::ImageButton::new(tex, size);
                     ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
-                        ui.add_space(1.0);
+                      //  ui.add_space(1.0);
                         if ui.add(launch).clicked() && self.states.ok_to_play() {
                             if let Some(s1) = &self.install_dir {
                                 if let LoadStatus::Loaded(_) = &self.states.config {
                                     let (s, r) = std::sync::mpsc::channel();
+                                    let (vs, vr) = std::sync::mpsc::channel();
                                     self.states.launching = LoadStatus::Pending(r);
+                                    self.states.new_version = LoadStatus::Pending(vr);
 
                                     let mutex = std::sync::Arc::new(std::sync::Mutex::new((0., "pending".to_owned(), None)));
                                     self.states.processing_status = Some(mutex.clone());
-                                    crate::patch::play_clicked(s1.to_path_buf(), self.use_dev_builds, mutex, s);
+
+                                    if let Some(c) = self.gather_args() {
+                                        crate::patch::play_clicked(s1.to_path_buf(), c, mutex, s, vs);
+
+                                    }
                                 }
                             }
                         }
                     });
 
-                    ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
-                        if ui.button(egui::RichText::new("      SETTINGS      ").size(24.)).clicked() {
-                            self.settings = true;
+                    if let Some(s) = &self.states.processing_status {
+                        ctx.request_repaint();
+                        let mut state = s.lock().unwrap();
+                        if state.2.is_some() {
+                            self.states.error = std::mem::take(&mut state.2);
                         }
+                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::LEFT), |ui| {
+                            egui::Frame::none().margin(Margin::symmetric(12., 0.)).show(ui, |ui| {
+                                ui.add_space(4.);
 
-                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::BOTTOM), |ui| {
-                            let twitter = self.refs.get_twitter_logo(ui);
-                            let size = twitter.size_vec2();
-                            let size = egui::vec2(size.x / 1.5, size.y / 1.5);
-                            if ui.add(egui::widgets::ImageButton::new(twitter, size)).clicked() {
-                                println!("Clicked on Twitter");
-                                if let Err(e) = open::that("https://twitter.com/proceliogame?lang=en") {
-                                    self.states.error = Some(Box::new(anyhow::Error::new(e)));
-                                }
-                            }
-        
-                            let youtube = self.refs.get_youtube_logo(ui);
-                            if ui.add(egui::widgets::ImageButton::new(youtube, size)).clicked() {
-                                println!("Clicked on Youtube");
-                                if let Err(e) = open::that("https://www.youtube.com/channel/UCb9SlKVDpFMb3_BkcTNv8SQ") {
-                                    self.states.error = Some(Box::new(anyhow::Error::new(e)));
-                                }
-                            }
+                                ui.add(egui::widgets::Label::new(&state.1));
 
-                            let discord = self.refs.get_discord_logo(ui);
-                            if ui.add(egui::widgets::ImageButton::new(discord, size)).clicked() {
-                                println!("Clicked on Discord");
-                                if let Err(e) = open::that("https://discord.gg/TDWKZzf") {
-                                        self.states.error = Some(Box::new(anyhow::Error::new(e)));
-                                }
-                            }
+                                ui.add_space(4.);
+                                ui.add(egui::widgets::ProgressBar::new(state.0).show_percentage().animate(true));
+
+                                egui::warn_if_debug_build(ui);
+                            });
+                            
                         });
-                    });
-                });
-                if let Some(s) = &self.states.processing_status {
-                    ctx.request_repaint();
-                    let mut state = s.lock().unwrap();
-                    if state.2.is_some() {
-                        self.states.error = std::mem::take(&mut state.2);
                     }
-                    egui::containers::Frame {
-                        margin: egui::style::Margin { left: 5., right: 5., top: 0., bottom: 0. },
-                        rounding: egui::Rounding { nw: 5.0, ne: 5.0, sw: 5.0, se: 5.0 },
-                        shadow: eframe::epaint::Shadow::default(),
-                        fill: col,
-                        stroke: egui::Stroke::default()
-                    }.show(ui, |ui| {
-                        ui.add(egui::widgets::ProgressBar::new(state.0).text(&state.1).animate(true));
-                    });
-                }
+                });
             });
+
+            
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
                     let col = egui::Color32::from_rgb(225, 225, 225);
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label(egui::RichText::new(format!("Launcher v{}  |  ", defs::version_str(&defs::version()))).color(col));
+                    ui.label(egui::RichText::new(format!("Launcher v{}  |  ", defs::version())).color(col));
                     ui.label(egui::RichText::new("Built with ").color(col));
                     ui.hyperlink_to(egui::RichText::new("egui").strong(), "https://github.com/emilk/egui");
                 });
@@ -420,78 +712,60 @@ impl epi::App for ProcelioLauncher {
             let rect = egui::Rect::from_two_pos(egui::pos2(left_width, top_height), egui::pos2(bgwidth - right_width, bgheight - bottom_height));
             img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
 
-            ui.columns(3, |ui| {
-                if let LoadStatus::Loaded(x) = &self.states.config {
-                    egui::containers::Frame {
-                        margin: egui::style::Margin { left: 5., right: 5., top: 10., bottom: 10. },
-                        rounding: egui::Rounding { nw: 5.0, ne: 5.0, sw: 5.0, se: 5.0 },
-                        shadow: eframe::epaint::Shadow::default(),
-                        fill: col,
-                        stroke: egui::Stroke::default()
-                    }.show(&mut ui[0], |ui| {
-                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::Center), |ui| {
-                            ui.label(egui::RichText::new("Message").size(24.0).strong().color(col2).underline());
-                        });
-                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::LEFT), |ui| {
-                            ui.label(egui::RichText::new(format!("{}", x.quote_of_the_day)).size(20.0).strong().color(col2));
-                        });
-                        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::Center), |ui| {
-                            ui.label(egui::RichText::new(format!("-- {}", x.quote_author)).size(20.0).strong().color(col2));
-                        });
-                    });
 
-                    egui::containers::Frame {
-                        margin: egui::style::Margin { left: 5., right: 5., top: 10., bottom: 10. },
-                        rounding: egui::Rounding { nw: 5.0, ne: 5.0, sw: 5.0, se: 5.0 },
-                        shadow: eframe::epaint::Shadow::default(),
-                        fill: col,
-                        stroke: egui::Stroke::default()
-                    }.show(&mut ui[2], |ui| {
-                        ui.allocate_ui(egui::vec2(0., 240.), |ui| {
-                            let upd = &x.updates[x.updates.len() - 1 - self.viewed_changelog];
-                            ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::Center), |ui| {
-                                ui.label(egui::RichText::new(format!("Procelio v{}", upd.version.iter().map(|x|x.to_string()).collect::<Vec<String>>().join("."))).size(24.0).underline().strong().color(col2));
-                                ui.label(egui::RichText::new(format!("{}", upd.title)).size(16.0).strong().color(col2).underline());
-                            });
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::LEFT), |ui| {
-                                    ui.label(egui::RichText::new(format!("{}", upd.description)).size(16.0).color(col2));
-                                });
-                            });
-                            
-                            if ui.available_height() - 30. > 0. {
-                                ui.add_space(ui.available_height() - 30.)
+            ui.with_layout(egui::Layout::right_to_left().with_cross_align(egui::Align::Center), |ui| {
+                egui::Frame::none()
+                .margin(egui::style::Margin { left: 10., right: 10., top: 10., bottom: 10. })
+                .show(ui, |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::RIGHT), |ui| {
+                    self.image(ui, col, "Discord", "https://discord.gg/TDWKZzf",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_discord_logo(ui));
+                    self.image(ui, col, "Website", "https://proceliogame.com",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_website_logo(ui));
+                    self.image(ui, col, "YouTube", "https://www.youtube.com/channel/UCb9SlKVDpFMb3_BkcTNv8SQ",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_youtube_logo(ui));
+                    self.image(ui, col, "Twitter", "https://twitter.com/proceliogame?lang=en",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_twitter_logo(ui));
+                    ui.label("\n\n");
+                    if self.image(ui, col, "Settings", "",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_settigns_gear(ui)) {
+                        self.settings = true;
+                    }
+
+                });
+
+                egui::Frame::none()
+                .show(ui, |ui| {
+                    if let LoadStatus::Loaded(x) = &self.states.channel {
+                        ui.with_layout(egui::Layout::left_to_right().with_cross_align(egui::Align::Center), |ui| {
+
+                            const WIDTH: usize = 3;
+                            let len = x.changelog.len();
+                            let mut index = std::cmp::min(usize::saturating_sub(len, WIDTH), self.viewed_changelog);
+                            let max_num = std::cmp::min(index + WIDTH, len);
+
+                            if index + WIDTH < len {
+                                if ui.button("\n\n\n < \n\n\n").clicked(){
+                                    index += 1;
+                                }
                             }
 
-                            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui|{
-                                ui.columns(2, |ui| {
-                                    if self.viewed_changelog < x.updates.len() - 1 {
-                                        ui[0].with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                                            if ui.button(egui::RichText::new("<-").strong().color(col2)).clicked() {
-                                                self.viewed_changelog += 1;
-                                            }
-                                        });
-                                    }
-                                    if self.viewed_changelog > 0 {
-                                        ui[1].with_layout(egui::Layout::top_down(egui::Align::RIGHT), |ui| {
-                                            if ui.button(egui::RichText::new("->").strong().color(col2)).clicked() {
-                                                self.viewed_changelog -= 1;
-                                            }
-                                        });
-                                    }
-                                });
+                            for i in (index..max_num).rev() {
+                                let cl = &x.changelog[len - 1 - i];
+                                ProcelioLauncher::changelog(&mut self.refs, ctx, ui, col, &cl.title, &cl.description, &cl.hyperlink);
+                            }
 
-                                if ui.button(egui::RichText::new(format!("View Full Changelog")).size(16.).color(col2).strong()).clicked() {
-                                    if let Err(e) = open::that(&upd.hyperlink) {
-                                        self.states.error = Some(Box::new(anyhow::Error::new(e)));
-                                    }
+                            if index > 0 {
+                                if ui.button("\n\n\n > \n\n\n").clicked(){
+                                    index -= 1;
                                 }
-                            });
+                            }
+                            ui.allocate_space(ui.available_size());
+                            self.viewed_changelog = index;
                         });
-                    });
-                 }
+                    }
+                    ui.allocate_space(ui.available_size());
+                });
             });
-            egui::warn_if_debug_build(ui);
+
+            
+        });
+
         });
 
         if let None = self.install_dir {
@@ -501,7 +775,7 @@ impl epi::App for ProcelioLauncher {
                     if ui.button("Install To: ").clicked() {
                         if let Some(path) = rfd::FileDialog::new().pick_folder() {
                             if path.is_dir() {
-                                self.install_dir = Some(path);
+                                self.install_dir = Some(if path.ends_with("Procelio") { path } else { path.join("Procelio") });
                             }
                         }
                     }
@@ -510,15 +784,40 @@ impl epi::App for ProcelioLauncher {
             });
         }
         if self.settings {
-            egui::Window::new("settings-window").show(ctx, |ui| {
-                ui.label("Settings:");
-                ui.checkbox(&mut self.use_dev_builds, "Enable Dev Builds");
+            egui::Window::new("// Settings").show(ctx, |ui| {               
+                egui::ComboBox::from_label("Release Channel")
+                    .selected_text(format!("{}", &self.channel))
+                    .show_ui(ui, |ui| {
+                        if let LoadStatus::Loaded(s) = &self.states.config {
+                            let pre = self.channel.clone();
 
+                            s.channels.iter().for_each(|x| {
+                                ui.selectable_value(&mut self.channel, x.to_owned(), format!("{}", x));
+                            });
+
+                            if self.channel != pre /* Is there a better "wasModified" in egui? */ {
+                                let (s, r) = std::sync::mpsc::channel();
+                                self.states.channel = LoadStatus::Pending(r);
+                                crate::net::get_data(self.channel.clone(), s);
+                            }
+                        }
+                    });
+
+                egui::ComboBox::from_label("Download Region")
+                    .selected_text(format!("{}", &self.cdn))
+                    .show_ui(ui, |ui| {
+                        if let LoadStatus::Loaded(s) = &self.states.config {
+                            s.cdn_regions.iter().for_each(|x| {
+                                ui.selectable_value(&mut self.cdn, x.to_owned(), format!("{}", x));
+                            });
+                        }
+                    }); 
+                
                 ui.horizontal(|ui| {
                     if ui.button("Install To: ").clicked() {
                         if let Some(path) = rfd::FileDialog::new().pick_folder() {
                             if path.is_dir() {
-                                self.install_dir = Some(path);
+                                self.install_dir = Some(if path.ends_with("Procelio") { path } else { path.join("Procelio") });
                             }
                         }
                     }
@@ -528,24 +827,25 @@ impl epi::App for ProcelioLauncher {
                 if ui.button("View Licenses").clicked() {
                     self.licenses = true;
                 }
+
+                ui.label("");
                 if ui.button(egui::RichText::new("Uninstall Procelio").color(egui::Color32::RED)).clicked() && self.states.ok_to_play() {
                     self.states.uninstall = LoadStatus::AwaitingApproval;
                 }
-                if ui.button("Done").clicked() {
+                ui.label("");
+                if ui.button("Close").clicked() {
                     self.settings = false;
                 }
             });
         }
 
         if self.licenses {
-            egui::Window::new("license-window").show(ctx, |ui| {
-                ui.label("Licenses & Dependencies:");
-
+            egui::Window::new("// Licenses & Dependencies").show(ctx, |ui| {
                 egui::ScrollArea::both().max_height(256.).show(ui, |ui| {
                     ui.label(defs::LICENSE);
                 });
 
-                if ui.button("Done").clicked() {
+                if ui.button("Close").clicked() {
                     self.licenses = false;
                 }
             });

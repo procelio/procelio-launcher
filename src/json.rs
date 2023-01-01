@@ -11,20 +11,65 @@ pub struct Update {
     pub image: Option<String>
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct LauncherConfiguration {
-    #[serde(alias = "websiteUrl")]
-    pub website_url: String,
-    #[serde(default, alias = "launcherArguments")]
-    pub launcher_arguments: Vec<String>,
-    pub updates: Vec<Update>,
-    #[serde(alias = "launcherVersion")]
-    pub launcher_version: Vec<i32>,
-    #[serde(alias = "quoteOfTheDay")]
-    pub quote_of_the_day: String,
-    #[serde(alias = "quoteAuthor")]
-    pub quote_author: String
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Release {
+    pub channel: String,
+    pub platform: String,
+    pub name: String,
+    pub download_size: u64,
+    pub title: String,
+    pub description: String,
+    pub changelog: String
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Patch {
+    pub name: String,
+    pub download_size: u64,
+    pub platform: String,
+    pub from_channel: String,
+    pub to_channel: String,
+    pub from_name: String,
+    pub to_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum UpgradePath {
+    NoChangesRequired,
+    FreshDownload(Release),
+    PatchRoute(Vec<Patch>)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LauncherMetadata {
+    pub version: String,
+    pub website_url: String,
+    pub message_of_the_day: String,
+    pub motd_author: String,
+    pub bg_image: String
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LauncherConfig {
+    pub channels: Vec<String>,
+    pub metadata: LauncherMetadata,
+    pub cdn_regions: Vec<String>
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChangelogElement {
+    pub title: String,
+    pub description: String,
+    pub hyperlink: String
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigResponse {
+    pub newest_release_name: String,
+    pub args: Vec<String>,
+    pub changelog: Vec<ChangelogElement>
+}
+
 
 pub enum LoadStatus<T> {
     AppLoad,
@@ -67,20 +112,11 @@ pub struct PatchList {
     pub patches: Vec<String>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct InstallManifest {
     pub exec: String,
-    pub version: Vec<i32>,
-    pub dev: bool,
-}
-
-impl std::cmp::PartialEq<InstallManifest> for GameVersion {
-    fn eq(&self, other: &InstallManifest) -> bool { 
-        self.dev == other.dev &&
-        self.major == other.version[0] &&
-        self.minor == other.version[1] &&
-        self.patch == other.version[2]
-    }
+    pub version: String,
+    pub channel: String
 }
 
 #[test]
