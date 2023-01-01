@@ -34,6 +34,8 @@ zip = "0.5"
 hex = "0.4"
 shell-words = "1.1.0"
 walkdir = "2"
+once_cell = "1.17.0"
+
 proceliotool = { version = "0.1.0", path = "../procelio-files/proceliotool" }
 [features]
 default = ["eframe/persistence", "serde"]

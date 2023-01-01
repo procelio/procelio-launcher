@@ -76,7 +76,7 @@ fn unzip_to<T: Seek + BufRead>(dir: std::path::PathBuf, reader: T, cb: Option<&d
 
 fn download_fresh(config: PlayGameConfig, dir: &std::path::PathBuf, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<InstallManifest>, anyhow::Error> {
     let path = crate::net::get_release_url(&config.cdn, &config.channel, &config.latest_build)?;
-    let file = crate::net::download_file(&path, Some(process.clone()))?;
+    let file = crate::net::download_file(None, &path, Some(process.clone()))?;
 
     println!("File downloaded");
     unzip_to(dir.to_owned(), file.as_reader(), Some(&|a, b| {
@@ -92,10 +92,10 @@ fn patch_to<T: Seek + BufRead>(dir: std::path::PathBuf, reader: T, cb: Option<&d
     proceliotool::tools::patch::from_zip(dir.to_owned(),&mut zip, cb)
 }
 
-fn apply_patch(config: PlayGameConfig, dir: &std::path::PathBuf, patch: String, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<InstallManifest>, anyhow::Error> {
+fn apply_patch(config: PlayGameConfig, dir: &std::path::PathBuf, patch: String, size: u64, process: std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>) -> Result<Option<InstallManifest>, anyhow::Error> {
     let path = crate::net::get_patch_url(&config.cdn, &config.channel, &patch)?;
     println!("Download patch {:?}", &path);
-    let file = crate::net::download_file(&path, Some(process.clone()))?;
+    let file = crate::net::download_file(Some(size), &path, Some(process.clone()))?;
 
     let dd = patch_to(dir.to_owned(), file.as_reader(), Some(&|a, b| {
         let mut lock = process.lock().unwrap();
@@ -149,7 +149,7 @@ pub fn play_clicked_internal(
         crate::json::UpgradePath::PatchRoute(pr) => {
             let mut m = None;
             for p in pr {
-                m = apply_patch(config.clone(), &dir, p.name, process.clone())?;
+                m = apply_patch(config.clone(), &dir, p.name, p.download_size, process.clone())?;
             }
             m
         },

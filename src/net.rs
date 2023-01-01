@@ -1,10 +1,13 @@
 use reqwest::blocking;
 use crate::json::{LauncherConfig, ConfigResponse, UpgradePath};
+use std::io::BufReader;
+use std::io::Write;
 use std::sync::mpsc::Sender;
 use std::thread;
 use crate::files::LoadedFileSource;
 use std::boxed::Box;
 use std::io::Read;
+use std::io::BufRead;
 
 fn platform() -> &'static str {
     #[cfg(windows)]
@@ -13,12 +16,6 @@ fn platform() -> &'static str {
     #[cfg(not(windows))]
     { "linux" }
 }
-
-/*
-    .route("/v1/launcher/files/:cdn/:version", get(launcher_files)) // LAUNCHER AUTOUPDATE TODO
-    .route("/v1/stats/:channel", get(stats_metadata)) // NOT USED BY LAUNCHER
-    .route("/v1/route/:channel/:platform/:from/:from_channel", get(upgrade_path))
-     */
 
 pub fn get_config(send: Sender<Result<LauncherConfig, anyhow::Error>>) {
     thread::spawn(move || {
@@ -77,20 +74,72 @@ pub fn get_launcher_url(cdn: &str, name: &str) -> Result<String, anyhow::Error> 
     Ok(blocking::get(format!("{}/v1/paths/launcher/{cdn}/{name}", crate::defs::URL))?.text()?)
 }
 
-pub fn download_file(url: &str, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>)  -> Result<LoadedFileSource, anyhow::Error>{
-    println!("Downloading {:?}", url);
+fn download_to_buffer<T: Write>(size: usize, mut read: BufReader<reqwest::blocking::Response>, write: T, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>) -> Result<(), anyhow::Error>{
+    let mut writer = std::io::BufWriter::new(write);
 
-    if let Some(s) = status {
-        for i in 0..=100 {
-            let q = (i as f32 / 100.0, format!("'downloading' file {i}/100: {url}"), None);
-            *s.lock().unwrap() = q;
-            std::thread::sleep(std::time::Duration::from_millis(50));
+    let iter = (size / 1000) as u64;
+
+    let mut buf = vec![0; 8192];
+
+    let mut k = 0;
+    let mut m = 0;
+    loop {
+        let n = read.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[0..n])?;
+        let n = n as u64;
+        k += n;
+        m += n;
+        
+        if k > iter {
+            k -= iter;
+            if let Some(s) = &status {
+                let mut lock = s.lock().unwrap();
+                lock.0 = m as f32 / size as f32;
+            }
         }
     }
-    
-    let data = std::fs::read(url.replace("/", "\\"  ));
 
-    Ok(LoadedFileSource::InMemory(data?))
+    Ok(())
+}
+
+
+pub fn download_file(exp_size: Option<u64>, url: &str, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>)  -> Result<LoadedFileSource, anyhow::Error>{
+    if let Some(s) = &status {
+        let mut lock = s.lock().unwrap();
+        // https://host/bucket/file/name.name?awspresign
+        let reg = regex::Regex::new("^.*/([^/\\?]*)\\?")?;
+        if let Some(ss) = reg.captures(url) {
+            lock.1 = format!("Downloading file {}", ss.get(1).unwrap().as_str());
+        }
+    }
+
+    let mut resp = blocking::get(url)?;
+    let exp_size = exp_size.or(resp.content_length());
+
+    if let None = exp_size {
+        let file = tempfile::tempfile()?;
+        let mut writer = std::io::BufWriter::new(file.try_clone()?);
+        resp.copy_to(&mut writer)?;
+        return Ok(LoadedFileSource::OnDisk(file));
+    }
+
+    let mut reader = std::io::BufReader::new(resp);
+
+    let size = exp_size.unwrap();
+    if size < 512_000_000 {
+        let mut buf = vec![0u8; size as usize];
+        let cs = std::io::Cursor::new(&mut buf);
+        download_to_buffer(size as usize, reader, cs, status)?;
+        return Ok(LoadedFileSource::InMemory(buf));
+    }
+
+    let file = tempfile::tempfile()?;
+    let f2 = file.try_clone()?;
+    download_to_buffer(size as usize, reader, f2, status)?;
+    Ok(LoadedFileSource::OnDisk(file))
 }
 
 pub fn load_image(curr_name: String, image_name: String) -> Option<Vec<u8>> {
@@ -111,7 +160,7 @@ pub fn load_image(curr_name: String, image_name: String) -> Option<Vec<u8>> {
         Err(_) => { return None; }
     };
 
-    let src = match download_file(&url, None) {
+    let src = match download_file(None, &url, None) {
         Ok(s) => s,
         Err(_) => { return None; }
     };

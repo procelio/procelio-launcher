@@ -200,7 +200,7 @@ impl Default for ProcelioLauncher {
 impl ProcelioLauncher {
     fn redownload_internal(cdn: String) -> Result<(), anyhow::Error> {
         let url = crate::net::get_launcher_url(&cdn, defs::launcher_name())?;
-        let file = crate::net::download_file(&url, None)?;
+        let file = crate::net::download_file(None, &url, None)?;
         let mut data = Vec::new();
         file.as_reader().read_to_end(&mut data)?;
     
