@@ -7,7 +7,6 @@ use std::thread;
 use crate::files::LoadedFileSource;
 use std::boxed::Box;
 use std::io::Read;
-use std::io::BufRead;
 
 fn platform() -> &'static str {
     #[cfg(windows)]
@@ -126,7 +125,7 @@ pub fn download_file(exp_size: Option<u64>, url: &str, status: Option<std::sync:
         return Ok(LoadedFileSource::OnDisk(file));
     }
 
-    let mut reader = std::io::BufReader::new(resp);
+    let reader = std::io::BufReader::new(resp);
 
     let size = exp_size.unwrap();
     if size < 512_000_000 {

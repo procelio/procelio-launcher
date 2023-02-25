@@ -1,7 +1,7 @@
 use std::io::BufRead;
 use std::thread;
 use std::boxed::Box;
-use crate::json::InstallManifest;
+use crate::json::{InstallManifest, OldInstallManifest};
 use std::io::Seek;
 
 #[derive(Clone)]
@@ -33,7 +33,9 @@ fn get_installed_version(install_dir: &std::path::PathBuf) -> Result<Option<Inst
     }
     let data = std::fs::read(path)?;
     let manifest: Result<InstallManifest, serde_json::Error> = serde_json::from_slice(&data);
-    manifest.map(|x|Some(x)).map_err(|x|x.into())
+    let old_manifest: Result<OldInstallManifest, serde_json::Error> = serde_json::from_slice(&data);
+
+    manifest.or(old_manifest.map(|x|x.into())).map(|x|Some(x)).map_err(|x|x.into())
 }
 
 fn unzip_to<T: Seek + BufRead>(dir: std::path::PathBuf, reader: T, cb: Option<&dyn Fn(f32, String)>) -> Result<(), anyhow::Error>{

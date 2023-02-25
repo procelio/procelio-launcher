@@ -498,7 +498,7 @@ impl ProcelioLauncher {
                         });
                 });
 
-                let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 16.), egui::Sense::click());
+                let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 16.), egui::Sense::hover());
                 ui.allocate_ui_at_rect(rect, |ui| {
                     egui::Frame::none()
                         .fill(egui::Color32::from_rgb(32, 32, 32))
@@ -570,8 +570,6 @@ impl epi::App for ProcelioLauncher {
         if self.check_states(ctx, frame) {
             return;
         }
-
-        let transparent = egui::Color32::from_rgba_premultiplied(0, 0, 0, 0);
 
         let col = egui::Color32::from_rgba_premultiplied(8, 8, 8, 225);
         let col2 = egui::Color32::from_rgb(212, 212, 212);

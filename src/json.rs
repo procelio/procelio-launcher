@@ -1,4 +1,3 @@
-
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -117,6 +116,23 @@ pub struct InstallManifest {
     pub exec: String,
     pub version: String,
     pub channel: String
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OldInstallManifest {
+    pub exec: String,
+    pub dev: bool,
+    pub version: Vec<u32>
+}
+
+impl From<OldInstallManifest> for InstallManifest {
+    fn from(item: OldInstallManifest) -> Self {
+        InstallManifest { 
+            exec: item.exec,
+            version: item.version.iter().map(|x|x.to_string()).collect::<Vec<String>>().join("."),
+            channel: (if item.dev { "dev" } else { "prod"}).to_owned()
+        }
+    }
 }
 
 #[test]
