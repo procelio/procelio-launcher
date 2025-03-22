@@ -7,6 +7,15 @@ use std::thread;
 use crate::files::LoadedFileSource;
 use std::boxed::Box;
 use std::io::Read;
+use anyhow::anyhow;
+
+fn killswitch_text() -> &'static str {
+    #[cfg(windows)]
+    { "-2146762487" }
+
+    #[cfg(not(windows))]
+    { "" }
+}
 
 fn platform() -> &'static str {
     #[cfg(windows)]
@@ -16,11 +25,46 @@ fn platform() -> &'static str {
     { "linux" }
 }
 
+fn check_killswitch() -> anyhow::Result<()> {
+    let cert = reqwest::tls::Certificate::from_pem(crate::defs::KILLSWITCHCERT)?;
+    let client = reqwest::blocking::ClientBuilder::new()
+        .tls_built_in_root_certs(false)
+        .add_root_certificate(cert)
+        .build()?;
+    let x = client.get(format!("{}/killswitch", crate::defs::KILLSWITCHURL)).send();
+
+    match x {
+        Ok(_) => Ok(()),
+        Err(e) if e.is_connect() => {
+            let format = format!("{:?}", e);
+            if format.contains(killswitch_text()) {
+                Err(anyhow!("Killswitch certificate not valid. Are you connecting to the real Procelio server?"))
+            } else {
+                Ok(())
+            }
+        }
+        Err(x) => Err(x.into())
+    }
+}
+
+fn fetch_config() -> anyhow::Result<LauncherConfig> {
+    let res = blocking::get(format!("{}/v1/launcher/config", crate::defs::URL));
+    res.and_then(|x| x.json::<LauncherConfig>()).map_err(|x|x.into())
+}
+
 pub fn get_config(send: Sender<Result<LauncherConfig, anyhow::Error>>) {
     thread::spawn(move || {
-        let res = blocking::get(format!("{}/v1/launcher/config", crate::defs::URL));
-        let res = res.and_then(|x| x.json::<LauncherConfig>());
-        send.send(res.map_err(|x|x.into())).unwrap();
+        let a = thread::spawn(check_killswitch);
+        let b = thread::spawn(fetch_config);
+
+        let killswitch = a.join().unwrap();
+        if killswitch.is_err() {
+            eprintln!("ERROR: {:?}", killswitch);
+            send.send(Err(killswitch.err().unwrap())).unwrap();
+            return;
+        }
+
+        send.send(b.join().unwrap()).unwrap();
     });
 }
 
