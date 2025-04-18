@@ -3,7 +3,6 @@ use std::thread;
 use std::sync::Arc;
 
 use eframe::egui::Sense;
-use eframe::egui::Style;
 use eframe::egui::UiBuilder;
 use egui::Margin;
 use egui::TextureOptions;
@@ -441,7 +440,7 @@ impl ProcelioLauncher {
             fill,
             stroke: egui::Stroke::default()
         }.show(ui, |ui| {
-            let (rect, resp) = ui.allocate_exact_size(egui::Vec2::new(100., 25.), egui::Sense::click());
+            let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(100., 25.), egui::Sense::click());
 
             let resp2 = ui.scope_builder(UiBuilder::new().sense(Sense::click()).max_rect(rect), |ui| {
                 ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::Center), |ui| {
@@ -585,7 +584,6 @@ impl eframe::App for ProcelioLauncher {
         let bgheight = bgtex.size_vec2().y;
         
         let mut top_height = 0.0;
-        let mut bottom_height = 0.0;
         let left_width = 0.0;
         let right_width = 0.0;
 
@@ -626,7 +624,7 @@ impl eframe::App for ProcelioLauncher {
         });
 
         let base_tex = self.refs.get_baseplate_tex(ctx);
-        bottom_height = base_tex.size_vec2().y;//ui.available_height();
+        let bottom_height = base_tex.size_vec2().y;
         egui::TopBottomPanel::bottom("bottom_panel").frame(nomargin).exact_height(bottom_height).resizable(false).show(ctx, |ui| {
             let base_tex = self.refs.get_baseplate_tex(ctx);
             let rect = egui::Rect::from_two_pos(egui::pos2(0.0, 540.0 - bottom_height), egui::pos2(960.0, 540.0));
