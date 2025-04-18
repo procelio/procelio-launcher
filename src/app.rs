@@ -1,9 +1,14 @@
 use std::sync::mpsc::Sender;
 use std::thread;
+use std::sync::Arc;
 
-use eframe::egui::style::Margin;
+use eframe::egui::Sense;
+use eframe::egui::Style;
+use eframe::egui::UiBuilder;
+use egui::Margin;
+use egui::TextureOptions;
 use eframe::epaint::TextureHandle;
-use eframe::{egui, epi};
+use eframe::egui;
 use crate::json::*;
 use crate::defs;
 use crate::patch::PlayGameConfig;
@@ -32,7 +37,7 @@ pub struct ProcelioLauncher {
     #[serde(skip)]
     states: Ephemeral,
     #[serde(skip)]
-    launcher_name: String,
+    pub launcher_name: String,
 }
 
 pub struct Ephemeral {
@@ -81,7 +86,6 @@ pub struct ResourceRefs {
     pub gear_logo: Option<egui::TextureHandle>,
     pub website_logo: Option<egui::TextureHandle>,
     pub discord_logo: Option<egui::TextureHandle>,
-    pub twitter_logo: Option<egui::TextureHandle>,
     pub youtube_logo: Option<egui::TextureHandle>,
     pub baseplate_tex: Option<egui::TextureHandle>,
     pub trim_tex: Option<egui::TextureHandle>,
@@ -97,7 +101,6 @@ impl ResourceRefs {
             website_logo: None,
             procelio_logo: None,
             discord_logo: None,
-            twitter_logo: None,
             youtube_logo: None,
             baseplate_tex: None,
             trim_tex: None,
@@ -119,62 +122,57 @@ impl ResourceRefs {
 
     pub fn get_procelio_logo(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
         self.procelio_logo.get_or_insert_with(|| {
-            ui.ctx().load_texture("procelio-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/Procelio_Light.png")).unwrap())
+            let img = ResourceRefs::load_image_bytes(include_bytes!("resources/Procelio_Light.png")).unwrap();
+            ui.ctx().load_texture("procelio-logo", img, TextureOptions::LINEAR)
         })
     }
 
     pub fn get_website_logo(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
         self.website_logo.get_or_insert_with(|| {
-            ui.ctx().load_texture("website-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/procelio_small.png")).unwrap())
+            ui.ctx().load_texture("website-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/procelio_small.png")).unwrap(), TextureOptions::LINEAR)
         })
     }
 
     pub fn get_settigns_gear(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
         self.gear_logo.get_or_insert_with(|| {
-            ui.ctx().load_texture("gear-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/gear_logo_small.png")).unwrap())
+            ui.ctx().load_texture("gear-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/gear_logo_small.png")).unwrap(), TextureOptions::LINEAR)
         })
     }
 
     pub fn get_discord_logo(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
         self.discord_logo.get_or_insert_with(|| {
-            ui.ctx().load_texture("discord-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/discord_logo_small.png")).unwrap())
-        })
-    }
-
-    pub fn get_twitter_logo(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
-        self.twitter_logo.get_or_insert_with(|| {
-            ui.ctx().load_texture("twitter-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/twitter_logo_small.png")).unwrap())
+            ui.ctx().load_texture("discord-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/discord_logo_small.png")).unwrap(), TextureOptions::LINEAR)
         })
     }
 
     pub fn get_youtube_logo(&mut self, ui: &egui::Ui) -> &egui::TextureHandle {
         self.youtube_logo.get_or_insert_with(|| {
-            ui.ctx().load_texture("youtube-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/youtube_logo_small.png")).unwrap())
+            ui.ctx().load_texture("youtube-logo", ResourceRefs::load_image_bytes(include_bytes!("resources/youtube_logo_small.png")).unwrap(), TextureOptions::LINEAR)
         })
     }
 
     pub fn get_baseplate_tex(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
         self.baseplate_tex.get_or_insert_with(|| {
-            ctx.load_texture("baseplate", ResourceRefs::load_image_bytes(include_bytes!("resources/baseplate.png")).unwrap())
+            ctx.load_texture("baseplate", ResourceRefs::load_image_bytes(include_bytes!("resources/baseplate.png")).unwrap(), TextureOptions::LINEAR)
         })
     }
 
     pub fn get_trim_tex(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
         self.trim_tex.get_or_insert_with(|| {
-            ctx.load_texture("trim", ResourceRefs::load_image_bytes(include_bytes!("resources/trim.png")).unwrap())
+            ctx.load_texture("trim", ResourceRefs::load_image_bytes(include_bytes!("resources/trim.png")).unwrap(), TextureOptions::LINEAR)
         })
     }
 
     pub fn get_play_tex(&mut self, ctx: &egui::Context) -> &egui::TextureHandle {
         self.play_tex.get_or_insert_with(|| {
-            ctx.load_texture("play", ResourceRefs::load_image_bytes(include_bytes!("resources/play.png")).unwrap())
+            ctx.load_texture("play", ResourceRefs::load_image_bytes(include_bytes!("resources/play.png")).unwrap(), TextureOptions::LINEAR)
         })
     }
 
     pub fn get_background(&mut self, img: Option<&Vec<u8>>, ctx: &egui::Context) -> &egui::TextureHandle {
         self.background.get_or_insert_with(|| {
             let bytes = img.as_ref().map(|&x| x.as_slice()).unwrap_or(include_bytes!("resources/background.png"));
-            ctx.load_texture("background", ResourceRefs::load_image_bytes(bytes).unwrap())
+            ctx.load_texture("background", ResourceRefs::load_image_bytes(bytes).unwrap(), TextureOptions::LINEAR)
         })
     }
 }
@@ -242,7 +240,7 @@ impl ProcelioLauncher {
         )
     }
 
-    fn check_states(&mut self, ctx: &egui::Context, frame: &epi::Frame) -> bool {
+    fn check_states(&mut self, ctx: &egui::Context, _frame: &eframe::Frame) -> bool {
         if let LoadStatus::Pending(recv) = &mut self.states.config {
             if let Ok(a) = recv.try_recv() {
                 match a {
@@ -288,7 +286,7 @@ impl ProcelioLauncher {
                         ProcelioLauncher::redownload_launcher(self.cdn.clone(), s);
                     }
                     if ui.button("Quit").clicked() {
-                        frame.quit();
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         std::process::exit(1);
                     }
                 } else { panic!(); }
@@ -342,7 +340,7 @@ impl ProcelioLauncher {
                 let mut b = false;
                 ui.checkbox(&mut b, "OK");
                 if b {
-                    frame.quit();
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
             return true;
@@ -434,29 +432,31 @@ impl ProcelioLauncher {
         false
     }
 
-    fn image(&mut self, ui: &mut egui::Ui, fill: egui::Color32, name: &str, url: &str, image: &dyn for<'a, 'b> Fn(&'a mut Self, &'b mut egui::Ui) -> &'a TextureHandle) -> bool {
+    fn image(&mut self, ui: &mut egui::Ui, fill: egui::Color32, name: &str, url: Option<&str>, image: &dyn for<'a, 'b> Fn(&'a mut Self, &'b mut egui::Ui) -> &'a TextureHandle) -> bool {
         let resp = egui::containers::Frame {
-            margin: egui::style::Margin { left: 5., right: 5., top: 5., bottom: 5. },
-            rounding: egui::Rounding { nw: 0.0, ne: 0.0, sw: 0.0, se: 0.0 },
+            outer_margin: Margin { left: 0, right: 0, top: 0, bottom: 0 },
+            inner_margin: Margin { left: 5, right: 5, top: 5, bottom: 5 },
+            corner_radius: egui::CornerRadius { nw: 0, ne: 0, sw: 0, se: 0 },
             shadow: eframe::epaint::Shadow::default(),
             fill,
             stroke: egui::Stroke::default()
         }.show(ui, |ui| {
             let (rect, resp) = ui.allocate_exact_size(egui::Vec2::new(100., 25.), egui::Sense::click());
-            ui.allocate_ui_at_rect(rect, |ui| {
+
+            let resp2 = ui.scope_builder(UiBuilder::new().sense(Sense::click()).max_rect(rect), |ui| {
                 ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::RightToLeft, egui::Align::Center), |ui| {
                     let image = image(self, ui);
                     let size = image.size_vec2() / 1.5;
-                    if ui.add(egui::widgets::ImageButton::new(image, size)).clicked() {
-                        if let Err(e) = open::that(url) {
-                            self.states.error = Some(Box::new(anyhow::Error::new(e)));
-                        }
-                    }
+                    ui.add_sized(size, egui::widgets::Image::new(image));
+                    let s =  ui.style_mut().interaction.selectable_labels;
+                    ui.style_mut().interaction.selectable_labels = false;
                     ui.label(name);
+                    ui.style_mut().interaction.selectable_labels = s;
                 });
             });
-            if resp.clicked() {
-                if url != "" {
+           
+            if resp2.response.clicked() {
+                if let Some(url) = url {
                     if let Err(e) = open::that(url) {
                         self.states.error = Some(Box::new(anyhow::Error::new(e)));
                     }
@@ -473,23 +473,23 @@ impl ProcelioLauncher {
         let text_color = egui::Color32::from_rgb(180, 180, 180);
         let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 300.), egui::Sense::focusable_noninteractive());
 
-        ui.allocate_ui_at_rect(rect, |ui| {
+        ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
             ui.style_mut().spacing.item_spacing = egui::vec2(0., 0.);
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 16.), egui::Sense::click());
-                ui.allocate_ui_at_rect(rect, |ui| {
-                    egui::Frame::none()
+                ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+                    egui::Frame::NONE
                         .fill(egui::Color32::from_rgb(32, 32, 32))
-                        .margin(Margin::same(5.))
+                        .inner_margin(Margin::same(5))
                         .show(ui, |ui| {
                             ui.add_sized([WIDTH - 10., 36.], egui::Label::new(egui::RichText::new(name).color(text_color).size(18.)));
                         });
                 });
                 let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 172.), egui::Sense::click());
-                ui.allocate_ui_at_rect(rect, |ui| {
-                    egui::Frame::none()
+                ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+                    egui::Frame::NONE
                         .fill(fill)
-                        .margin(Margin::same(5.))
+                        .inner_margin(Margin::same(5))
                         .show(ui, |ui| {
                             ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                                 ui.add(egui::Label::new(egui::RichText::new(description).size(12.)));
@@ -499,10 +499,10 @@ impl ProcelioLauncher {
                 });
 
                 let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(WIDTH, 16.), egui::Sense::hover());
-                ui.allocate_ui_at_rect(rect, |ui| {
-                    egui::Frame::none()
+                ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+                    egui::Frame::NONE
                         .fill(egui::Color32::from_rgb(32, 32, 32))
-                        .margin(Margin::same(5.))
+                        .inner_margin(Margin::same(5))
                         .show(ui, |ui| {
                             let txt = egui::RichText::new("FULL PATCH NOTES").color(text_color).size(16.);
                             if ui.add(egui::widgets::Button::new(txt)).clicked() {
@@ -512,22 +512,15 @@ impl ProcelioLauncher {
                 });
 
                 let trim = refs.get_trim_tex(ctx);
-                ui.add(egui::Image::new(trim, trim.size_vec2() * 1. / (trim.size_vec2().x / WIDTH)).tint(egui::Color32::from_rgb(32, 32, 32)));
+                ui.add_sized(trim.size_vec2() * 1. / (trim.size_vec2().x / WIDTH), egui::Image::new(trim).tint(egui::Color32::from_rgb(32, 32, 32)));
             });
         });
     }
-}
 
-impl epi::App for ProcelioLauncher {
-
-    fn name(&self) -> &str {
-       &self.launcher_name
-    }
-
-    /// Called once before the first frame.
-    fn setup(&mut self, ctx: &egui::Context, _frame: &epi::Frame, _storage: Option<&dyn epi::Storage>) {
-        if let Some(storage) = _storage {
-            *self = epi::get_value(storage, epi::APP_KEY).unwrap_or_default()
+    pub fn setup(&mut self, cc: &eframe::CreationContext<'_>) {
+        let ctx: &egui::Context = &cc.egui_ctx;
+        if let Some(storage) = cc.storage {
+            *self = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         }
 
         let (s, r) = std::sync::mpsc::channel();
@@ -547,7 +540,7 @@ impl epi::App for ProcelioLauncher {
         ctx.set_style(style);
 
         let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert( "Prime".to_owned(), egui::FontData::from_static(include_bytes!("resources/Prime-Regular.otf")));
+        fonts.font_data.insert( "Prime".to_owned(), Arc::new(egui::FontData::from_static(include_bytes!("resources/Prime-Regular.otf"))));
         
         fonts
             .families
@@ -557,16 +550,18 @@ impl epi::App for ProcelioLauncher {
 
         ctx.set_fonts(fonts);
     }
+}
 
+impl eframe::App for ProcelioLauncher {
     /// Called by the frame work to save state before shutdown.
-    fn save(&mut self, storage: &mut dyn epi::Storage) {
-        epi::set_value(storage, epi::APP_KEY, self);
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
-    fn update(&mut self, ctx: &egui::Context, frame: &epi::Frame) {
-        frame.set_window_size(egui::vec2(960.0, 540.0));
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // frame.set_window_size(egui::vec2(960.0, 540.0));
         if self.check_states(ctx, frame) {
             return;
         }
@@ -574,7 +569,7 @@ impl epi::App for ProcelioLauncher {
         let col = egui::Color32::from_rgba_premultiplied(8, 8, 8, 225);
         let col2 = egui::Color32::from_rgb(212, 212, 212);
 
-        let nomargin = egui::Frame::default().margin(egui::vec2(0.0, 0.0));
+        let nomargin = egui::Frame::default().inner_margin(Margin::same(0));
 
         let bgtex = match &self.states.image {
             LoadStatus::Loaded(x) => {
@@ -594,28 +589,29 @@ impl epi::App for ProcelioLauncher {
         let left_width = 0.0;
         let right_width = 0.0;
 
-        let img = egui::Image::new(bgtex, bgtex.size_vec2());
+        let img = egui::Image::new(bgtex);
 
         egui::TopBottomPanel::top("top_panel").resizable(false).frame(nomargin).show(ctx, |ui| {
             top_height = ui.available_height();
             let rect = egui::Rect::from_two_pos(egui::pos2(0.0, 0.0), egui::pos2(bgwidth, top_height));
-            img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
+            img.clone().uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
 
             egui::containers::Frame {
-                margin: egui::style::Margin { left: 0., right: 0., top: 0., bottom: 0. },
-                rounding: egui::Rounding { nw: 0.0, ne: 0.0, sw: 0.0, se: 0.0 },
+                inner_margin: Margin { left: 0, right: 0, top: 0, bottom: 0 },
+                outer_margin: Margin { left: 0, right: 0, top: 0, bottom: 0 },
+                corner_radius: egui::CornerRadius { nw: 0, ne: 0, sw: 0, se: 0 },
                 shadow: eframe::epaint::Shadow::default(),
                 fill: col,
                 stroke: egui::Stroke::default()
             }.show(ui, |ui| {
                 ui.columns(2, |ui| {
-                    ui[0].with_layout(egui::Layout::left_to_right().with_cross_align(egui::Align::Center), |ui| {
+                    ui[0].with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         let tex = self.refs.get_procelio_logo(ui);
-                        ui.image(tex, tex.size_vec2() * 0.5);
+                        ui.image(tex);
                     });
 
-                    egui::Frame::none()
-                        .margin(egui::style::Margin { left: 10., right: 10., top: 10., bottom: 10. })
+                    egui::Frame::NONE
+                        .inner_margin(Margin { left: 10, right: 10, top: 10, bottom: 10 })
                         .show(&mut ui[1], |ui| {
                         ui.with_layout(egui::Layout::top_down(egui::Align::RIGHT), |ui| {
                             ui.label(egui::RichText::new("DAILY MESSAGE").size(18.0).strong().color(col2));
@@ -629,15 +625,14 @@ impl epi::App for ProcelioLauncher {
             });
         });
 
-        egui::TopBottomPanel::bottom("bottom_panel").frame(nomargin).resizable(false).show(ctx, |ui| {
+        let base_tex = self.refs.get_baseplate_tex(ctx);
+        bottom_height = base_tex.size_vec2().y;//ui.available_height();
+        egui::TopBottomPanel::bottom("bottom_panel").frame(nomargin).exact_height(bottom_height).resizable(false).show(ctx, |ui| {
             let base_tex = self.refs.get_baseplate_tex(ctx);
-            ui.image(base_tex, base_tex.size_vec2());
-
-            bottom_height = base_tex.size_vec2().y;//ui.available_height();
             let rect = egui::Rect::from_two_pos(egui::pos2(0.0, 540.0 - bottom_height), egui::pos2(960.0, 540.0));
-            img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
+            img.clone().uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
             
-            let img = egui::Image::new(base_tex, base_tex.size_vec2());
+            let img = egui::Image::new(base_tex);
             img.tint(col).paint_at(ui, rect);        
 
             ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
@@ -647,10 +642,10 @@ impl epi::App for ProcelioLauncher {
                     
                     let tex = self.refs.get_play_tex(ctx);
                     let size = egui::vec2(171., 64.);
-                    let launch = egui::widgets::ImageButton::new(tex, size);
+                    let launch = egui::widgets::ImageButton::new(tex);
                     ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
                       //  ui.add_space(1.0);
-                        if ui.add(launch).clicked() && self.states.ok_to_play() {
+                        if ui.add_sized(size, launch).clicked() && self.states.ok_to_play() {
                             if let Some(s1) = &self.install_dir {
                                 if let LoadStatus::Loaded(_) = &self.states.config {
                                     let (s, r) = std::sync::mpsc::channel();
@@ -677,7 +672,7 @@ impl epi::App for ProcelioLauncher {
                             self.states.error = std::mem::take(&mut state.2);
                         }
                         ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::LEFT), |ui| {
-                            egui::Frame::none().margin(Margin::symmetric(12., 0.)).show(ui, |ui| {
+                            egui::Frame::NONE.inner_margin(Margin::symmetric(12, 0)).show(ui, |ui| {
                                 ui.add_space(4.);
 
                                 ui.add(egui::widgets::Label::new(&state.1));
@@ -693,8 +688,6 @@ impl epi::App for ProcelioLauncher {
                 });
             });
 
-            
-
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
                     let col = egui::Color32::from_rgb(225, 225, 225);
@@ -709,28 +702,25 @@ impl epi::App for ProcelioLauncher {
         egui::CentralPanel::default().frame(nomargin).show(ctx, |ui| {
             let rect = egui::Rect::from_two_pos(egui::pos2(left_width, top_height), egui::pos2(bgwidth - right_width, bgheight - bottom_height));
             img.uv(ProcelioLauncher::uvize(rect, bgwidth, bgheight)).paint_at(ui, rect);
-
-
-            ui.with_layout(egui::Layout::right_to_left().with_cross_align(egui::Align::Center), |ui| {
-                egui::Frame::none()
-                .margin(egui::style::Margin { left: 10., right: 10., top: 10., bottom: 10. })
+            
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::Frame::NONE
+                .inner_margin(Margin { left: 10, right: 10, top: 10, bottom: 10 })
                 .show(ui, |ui| {
                 ui.with_layout(egui::Layout::top_down(egui::Align::RIGHT), |ui| {
-                    self.image(ui, col, "Discord", "https://discord.gg/TDWKZzf",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_discord_logo(ui));
-                    self.image(ui, col, "Website", "https://proceliogame.com",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_website_logo(ui));
-                    self.image(ui, col, "YouTube", "https://www.youtube.com/channel/UCb9SlKVDpFMb3_BkcTNv8SQ",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_youtube_logo(ui));
-                    self.image(ui, col, "Twitter", "https://twitter.com/proceliogame?lang=en",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_twitter_logo(ui));
+                    self.image(ui, col, "Discord", Some("https://discord.gg/TDWKZzf"),&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_discord_logo(ui));
+                    self.image(ui, col, "Website", Some("https://proceliogame.com"),&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_website_logo(ui));
+                    self.image(ui, col, "YouTube", Some("https://www.youtube.com/channel/UCb9SlKVDpFMb3_BkcTNv8SQ"),&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_youtube_logo(ui));
                     ui.label("\n\n");
-                    if self.image(ui, col, "Settings", "",&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_settigns_gear(ui)) {
+                    if self.image(ui, col, "Settings", None,&|x: &mut ProcelioLauncher, ui: &mut egui::Ui| x.refs.get_settigns_gear(ui)) {
                         self.settings = true;
                     }
-
                 });
 
-                egui::Frame::none()
+                egui::Frame::NONE
                 .show(ui, |ui| {
                     if let LoadStatus::Loaded(x) = &self.states.channel {
-                        ui.with_layout(egui::Layout::left_to_right().with_cross_align(egui::Align::Center), |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
 
                             const WIDTH: usize = 3;
                             let len = x.changelog.len();
@@ -759,13 +749,10 @@ impl epi::App for ProcelioLauncher {
                     }
                     ui.allocate_space(ui.available_size());
                 });
-            });
-
-            
+             });
         });
 
         });
-
         if let None = self.install_dir {
             egui::Window::new("install-window").show(ctx, |ui| {
                 ui.label("Select Procelio Installation Directory:");

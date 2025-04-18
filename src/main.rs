@@ -7,9 +7,19 @@ use eframe::egui;
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    let app = procelio_launcher::ProcelioLauncher::default();
+    let mut app = procelio_launcher::ProcelioLauncher::default();
     let mut native_options = eframe::NativeOptions::default();
-    native_options.initial_window_size = Some(egui::vec2(960.0, 540.0));
-    native_options.resizable = false;
-    eframe::run_native(Box::new(app), native_options);
+    native_options.viewport.inner_size = Some(egui::vec2(960.0, 540.0));
+    native_options.viewport.min_inner_size = Some(egui::vec2(960.0, 540.0));
+    native_options.viewport.max_inner_size = Some(egui::vec2(960.0, 540.0));
+    native_options.viewport.resizable = Some(false);
+    native_options.hardware_acceleration = eframe::HardwareAcceleration::Off;
+    println!("Result: {:?}", eframe::run_native(
+        &app.launcher_name.clone(),
+        native_options,
+        Box::new(|cc| {
+            app.setup(cc);
+            Ok(Box::new(app))
+        })
+    ));
 }
