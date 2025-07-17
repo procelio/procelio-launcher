@@ -1,0 +1,43 @@
+By downloading, installing, copying, or using a Fontfabric Free Font product, you agree to the terms, stated within this legal agreement:
+
+01. GENERAL PROVISIONS:
+This is a FontfabricTM Free Font End User License Agreement (\"FF EULA\") between you as an end-user (\"Licensee\") and Fontfabric Type Foundry LLC (\"Licensor\"). Fonts / Free fonts refers to the set of files released by the Fontfabric under this license and clearly marked as such. This may include source files, build scripts, and documentation. Original work refers to the collection of Font Software components as distributed by Fontfabric. Derivative work refers to any derivative made by adding to, deleting, or substituting -- in part or in whole -- any of the components of the Original work, by changing formats or by porting the Font to a new environment. You are welcome to give the Licensor credit in your work and to send examples of the free font product in use to the following address: contact@fontfabric.com
+
+02. ALLOWED USES:
+You may use the free fonts to create objects, such as logos and other elements of brand identity; business and greeting cards, postcards, postage stamps, and other stationery materials; books, magazines, newspapers, newsprint, and other printed and editorial materials; envelopes and package design; wallpaper prints; infographics; any vector graphics and any office supplies;
+
+You may use the free fonts to create images on any surface, such as paper, computer screens, web pages, photographs and visuals, movie credits, printed material, T-shirts and textile, and other surfaces where the image has a fixed size.
+
+You may use the free fonts to create vector files or other scalable drawings (AI, EPS, PDF etc.), as well as static images (JPEG, TIFF, PNG etc.), even if these images are used on the web or in a mobile app.
+
+You may use the free fonts to create Web Apps, Mobile Apps, Windows Apps, Linux Apps, OS X Apps, Android Apps, etc., and may have no limitation to distribute your apps.
+
+You may use the free fonts as web-fonts with @font-face declaration to create web sites, web templates, etc.
+
+You may use the free fonts to create any files for ePub, such as PDF, WP templates, e-books, website templates, mobile apps, etc. for any kind of devices including Kindles, iPads, or other eReaders amidst others.
+
+You may use the free fonts to create any type of video content, distributed via streaming services, TV advertising, Broadcasting or social media.
+
+03. NUMBER OF USERS OR PAGE VIEWS:
+You are allowed to install the free fonts on unlimited devices (computers, phones, tablets).
+
+You are allowed to upload and use the free fonts on websites/templates with unlimited pageviews.
+
+04. EMBEDDING:
+
+You may embed the free fonts into any document you send to third parties. Such documents may be viewed, printed, and edited by the recipients.
+
+You may embed the free fonts into software or hardware products in which the fonts will be used by the purchasers of such products (PDFs, WP templates, e-books, Website templates, Mobile Apps, etc.).
+
+You may embed the free fonts into a web page with a @font-face declaration.
+
+You are able to generate web-font packages from the font files in a third-party program or generator.
+
+05. MODIFICATIONS:
+
+You may import characters from the font as graphical objects into a drawing program (Adobe Illustrator, Adobe Photoshop, Corel Draw, etc.) and modify such graphical objects.
+
+You may not modify, adapt, translate, reverse engineer, decompile, disassemble, or create derivative works based on the free fonts themselves without Fontfabric Type Foundry's prior written consent. That means to edit/modify the font files themselves in font editors/software/programs like FontLab Studio, Fontographer, Font Creator, TypeTool, BitFonter, Glyphs, FontStruct, RoboFont, etc.
+
+You may not resell or redistribute the free fonts themselves or any derivative works based on the free fonts themselves without Fontfabric Type Foundry's prior written consent."
+ 
