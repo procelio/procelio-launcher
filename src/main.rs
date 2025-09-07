@@ -7,13 +7,18 @@ use eframe::egui;
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    use std::sync::Arc;
+
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("resources/procelio_icon.png")).unwrap();
+
     let mut app = procelio_launcher::ProcelioLauncher::default();
     let mut native_options = eframe::NativeOptions::default();
     native_options.viewport.inner_size = Some(egui::vec2(960.0, 540.0));
     native_options.viewport.min_inner_size = Some(egui::vec2(960.0, 540.0));
     native_options.viewport.max_inner_size = Some(egui::vec2(960.0, 540.0));
     native_options.viewport.resizable = Some(false);
-    native_options.hardware_acceleration = eframe::HardwareAcceleration::Off;
+    native_options.viewport.icon = Some(Arc::new(icon));
+    native_options.hardware_acceleration = eframe::HardwareAcceleration::Preferred;
     println!("Result: {:?}", eframe::run_native(
         &app.launcher_name.clone(),
         native_options,

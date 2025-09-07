@@ -8,10 +8,22 @@ use egui::Margin;
 use egui::TextureOptions;
 use eframe::epaint::TextureHandle;
 use eframe::egui;
+use serde::Deserialize;
+use serde::Serialize;
 use crate::json::*;
 use crate::defs;
 use crate::patch::PlayGameConfig;
 use open;
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Debug)]
+pub enum GraphicsApi {
+    #[default]
+    Default,
+    Vulkan,
+    Dx11,
+    Dx12
+}
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -24,7 +36,8 @@ pub struct ProcelioLauncher {
     cdn: String,
     #[serde(default)]
     image: String,
-
+    #[serde(default)]
+    graphics_api: GraphicsApi,
     #[serde(skip)]
     refs: ResourceRefs,
     #[serde(skip)]
@@ -185,6 +198,7 @@ impl Default for ProcelioLauncher {
             image: "none".to_owned(),
             channel: "prod".to_owned(),
             cdn: "nyc3".to_owned(),
+            graphics_api: GraphicsApi::Default,
             settings: false,
             licenses: false,
             viewed_changelog: 0,
@@ -221,11 +235,23 @@ impl ProcelioLauncher {
 
     fn gather_args(&self) -> Option<PlayGameConfig> {
         if let LoadStatus::Loaded(t) = &self.states.channel {
+            let graphics_arg = match self.graphics_api {
+                GraphicsApi::Default => None,
+                GraphicsApi::Vulkan => Some("-force-vulkan"),
+                GraphicsApi::Dx12 => Some("-force-d3d12"),
+                GraphicsApi::Dx11 => Some("-force-d3d11")
+            };
+
+            let mut args = t.args.clone();
+            if let Some(graphic) = graphics_arg {
+                args.push(graphic.to_owned());
+            }
+
             Some(PlayGameConfig {
                 cdn: self.cdn.clone(),
                 channel: self.channel.clone(),
                 latest_build: t.newest_release_name.clone(),
-                args: t.args.clone()
+                args
             })
         } else {
             None
@@ -795,7 +821,18 @@ impl eframe::App for ProcelioLauncher {
                             });
                         }
                     }); 
-                
+
+                egui::ComboBox::from_label("Graphics API")
+                    .selected_text(format!("{:?}", &self.graphics_api))
+                    .show_ui(ui, |ui: &mut egui::Ui| {
+                        if let LoadStatus::Loaded(_) = &self.states.config {
+                            ui.selectable_value(&mut self.graphics_api, GraphicsApi::Default, "Default");
+                            ui.selectable_value(&mut self.graphics_api, GraphicsApi::Vulkan, "Vulkan");
+                            ui.selectable_value(&mut self.graphics_api, GraphicsApi::Dx12, "DX12");
+                            ui.selectable_value(&mut self.graphics_api, GraphicsApi::Dx11, "DX11");
+                        }
+                    }); 
+                    
                 ui.horizontal(|ui| {
                     if ui.button("Install To: ").clicked() {
                         if let Some(path) = rfd::FileDialog::new().pick_folder() {
