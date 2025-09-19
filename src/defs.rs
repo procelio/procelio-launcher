@@ -19,7 +19,7 @@ b4GNriZpvQjaVhYT6hMi
 -----END CERTIFICATE-----".as_bytes(); // GOOD CERT
 
 pub fn version() -> &'static str {
-    "1.1.2"
+    "1.2.0"
 }
 
 pub fn launcher_name() -> &'static str {
