@@ -1,6 +1,5 @@
 use reqwest::blocking;
 use crate::json::{LauncherConfig, ConfigResponse, UpgradePath};
-use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::sync::mpsc::Sender;
@@ -229,7 +228,7 @@ pub fn load_image(curr_name: String, image_name: String) -> Option<Vec<u8>> {
 
    if let Some(parent_path) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent_path) {
-            println!("Error creating directory {:?}", parent_path);
+            println!("Error creating directory {:?}: {:?}", parent_path, e);
         }
     }
 
