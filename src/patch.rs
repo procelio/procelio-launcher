@@ -109,17 +109,34 @@ fn apply_patch(config: PlayGameConfig, dir: &std::path::PathBuf, patch: String, 
     Ok(get_installed_version(dir)?)
 }
 
+fn make_executable<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(0o755);
+
+        std::fs::set_permissions(&path, permissions)?;
+
+        println!("Set permissions for: {:?}", path.as_ref());
+    }
+    Ok(())
+}
+
 fn launch_game(config: PlayGameConfig, manifest: Option<InstallManifest>, dir: std::path::PathBuf, version_send: std::sync::mpsc::Sender<Result<InstallManifest, anyhow::Error>>) -> Result<Option<std::process::Child>, anyhow::Error> {
     let manifest = match manifest {
         Some(s) => s,
         None => { return Err(anyhow::Error::msg("Unable to load launch manifest")); }
     };
-    println!("Launch Game");
+    println!("Launch Game: {:?}", dir.join(&manifest.exec));
     version_send.send(Ok(manifest.clone()))?;
     thread::spawn(move || {
-        std::process::Command::new(dir.join(manifest.exec))
-        .args(config.args)
-        .output().unwrap();
+        make_executable(dir.join(&manifest.exec)).unwrap();
+
+        let data = std::process::Command::new(dir.join(manifest.exec))
+            .current_dir(dir)
+            .args(config.args)
+            .output().unwrap();
+        println!("{:?}", data.status);
     });
     Ok(None)
 }

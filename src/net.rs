@@ -1,6 +1,7 @@
 use reqwest::blocking;
 use crate::json::{LauncherConfig, ConfigResponse, UpgradePath};
 use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::Write;
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -117,13 +118,14 @@ pub fn get_launcher_url(cdn: &str, name: &str) -> Result<String, anyhow::Error> 
     Ok(blocking::get(format!("{}/v1/paths/launcher/{cdn}/{name}", crate::defs::URL))?.text()?)
 }
 
-fn download_to_buffer<T: Write>(size: usize, mut read: BufReader<reqwest::blocking::Response>, write: T, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>) -> Result<(), anyhow::Error>{
+fn download_to_buffer<T: Write>(size: usize, mut read: reqwest::blocking::Response, write: T, status: Option<std::sync::Arc<std::sync::Mutex<(f32, String, Option<Box<anyhow::Error>>)>>>) -> Result<(), anyhow::Error>{
     let mut writer = std::io::BufWriter::new(write);
 
-    let iter = (size / 1000) as u64;
+    let iter = (size / 100) as u64;
 
-    let mut buf = vec![0; 8192];
+    let mut buf = vec![0; 65536];
 
+    
     let mut k = 0;
     let mut m = 0;
     loop {
@@ -131,17 +133,23 @@ fn download_to_buffer<T: Write>(size: usize, mut read: BufReader<reqwest::blocki
         if n == 0 {
             break;
         }
+
         writer.write_all(&buf[0..n])?;
+
         let n = n as u64;
         k += n;
         m += n;
         
         if k > iter {
             k -= iter;
-            if let Some(s) = &status {
-                let mut lock = s.lock().unwrap();
-                lock.0 = m as f32 / size as f32;
-            }
+            let val = m as f32 / size as f32;
+            let status = status.clone();
+            thread::spawn(move || {
+                if let Some(s) = &status {
+                    let mut lock = s.lock().unwrap();
+                    lock.0 = lock.0.max(val);
+                }
+            });
         }
     }
 
@@ -169,7 +177,7 @@ pub fn download_file(exp_size: Option<u64>, url: &str, status: Option<std::sync:
         return Ok(LoadedFileSource::OnDisk(file));
     }
 
-    let reader = std::io::BufReader::new(resp);
+    let reader = resp;
 
     let size = exp_size.unwrap();
     if size < 512_000_000 {
@@ -181,7 +189,7 @@ pub fn download_file(exp_size: Option<u64>, url: &str, status: Option<std::sync:
 
     let file = tempfile::tempfile()?;
     let f2 = file.try_clone()?;
-    download_to_buffer(size as usize, reader, f2, status)?;
+    download_to_buffer(size as usize, reader, BufWriter::new(f2), status)?;
     Ok(LoadedFileSource::OnDisk(file))
 }
 
@@ -219,6 +227,13 @@ pub fn load_image(curr_name: String, image_name: String) -> Option<Vec<u8>> {
         }
     };
 
-    let _ = std::fs::write(path, bytes.as_slice());
+   if let Some(parent_path) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent_path) {
+            println!("Error creating directory {:?}", parent_path);
+        }
+    }
+
+    let result = std::fs::write(path, bytes.as_slice());
+    println!("{:?}", result);
     Some(bytes)
 }

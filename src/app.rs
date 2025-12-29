@@ -666,7 +666,7 @@ impl eframe::App for ProcelioLauncher {
                     
                     let tex = self.refs.get_play_tex(ctx);
                     let size = egui::vec2(171., 64.);
-                    let launch = egui::widgets::ImageButton::new(tex);
+                    let launch = egui::widgets::Button::image(tex);
                     ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::RIGHT), |ui| {
                       //  ui.add_space(1.0);
                         if ui.add_sized(size, launch).clicked() && self.states.ok_to_play() {

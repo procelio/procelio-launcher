@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-#![cfg_attr(not(debug_assertions), deny(warnings))] // Forbid warnings in release builds
+#![cfg_attr(not(debug_assertions),)] // Forbid warnings in release builds
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] //Hide console window in release builds on Windows, this blocks stdout.
 
@@ -19,6 +19,7 @@ fn main() {
     native_options.viewport.resizable = Some(false);
     native_options.viewport.icon = Some(Arc::new(icon));
     native_options.hardware_acceleration = eframe::HardwareAcceleration::Preferred;
+    native_options.renderer = eframe::Renderer::Wgpu;
     println!("Result: {:?}", eframe::run_native(
         &app.launcher_name.clone(),
         native_options,

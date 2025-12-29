@@ -3,8 +3,7 @@ name = "procelio_launcher"
 default-run = "procelio_launcher_bin"
 version = "0.1.3"
 authors = ["Brennan Stein"]
-edition = "2021"
-rust-version = "1.56"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,16 +15,16 @@ path = "src/main.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-eframe = { version = "0.32", features = ["wgpu"] } # Gives us egui, epi and web+native backends
-egui_extras = { version = "0.32", features = ["image"] }
+eframe = { version = "0.33", features = ["wgpu"] } # Gives us egui, epi and web+native backends
+egui_extras = { version = "0.33", features = ["image"] }
 image = { version = "0.25", features = ["jpeg", "png"] }
 open = "5"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "stream"] }
 anyhow = "1"
 platform-dirs = "0.3.0"
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = "1"
-rfd = "0.15"
+rfd = "0.16"
 sha2 = "0.10"
 tempfile = "3"
 regex = "1"
@@ -33,11 +32,10 @@ zip = "4"
 hex = "0.4"
 shell-words = "1.1.0"
 walkdir = "2"
-once_cell = "1.17.0"
-wgpu = "25"
-
+wgpu = "28"
+futures-util = "0.3"
 proceliotool = { version = "0.1.0", path = "../procelio-files/proceliotool" }
-tokio = { version = "1", features = ["full"] }
+
 [features]
 default = ["eframe/persistence", "serde"]
 
